@@ -20,7 +20,6 @@ import numpy as np
 import paddle
 import paddle.amp.auto_cast as autocast
 import paddle.distributed as dist
-from data import collate_tensors_and_strings
 from paddlenlp.trainer import PrinterCallback, ProgressCallback, Trainer
 from paddlenlp.trainer.integrations import (
     INTEGRATION_TO_CALLBACK,
@@ -30,6 +29,8 @@ from paddlenlp.trainer.integrations import (
 )
 from paddlenlp.utils import profiler
 from paddlenlp.utils.log import logger
+
+from .data import collate_tensors_and_strings
 
 
 def worker_init_fn(_):
@@ -235,6 +236,7 @@ class AdvancedVideoTokenizerTrainer(Trainer):
             shuffle=self.args.dataloader_shuffle,
             drop_last=True,
             batch_size=self.args.per_device_train_batch_size,
+            num_workers=self.args.dataloader_num_workers,
             collate_fn=collate_tensors_and_strings,
             worker_init_fn=worker_init_fn,
         )

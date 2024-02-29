@@ -1,0 +1,52 @@
+Traceback (most recent call last):
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/train_magvit2_trainer.py", line 20, in <module>
+    from magvit2 import (
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/__init__.py", line 15, in <module>
+    from .data import ImageDataset, VideoDataset
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/data.py", line 21, in <module>
+    from beartype import beartype
+ModuleNotFoundError: No module named 'beartype'
+Traceback (most recent call last):
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/train_magvit2_trainer.py", line 20, in <module>
+    from magvit2 import (
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/__init__.py", line 15, in <module>
+    from .data import ImageDataset, VideoDataset
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/data.py", line 27, in <module>
+    from utils import _FUNCTIONAL_PAD
+ModuleNotFoundError: No module named 'utils'
+Traceback (most recent call last):
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/train_magvit2_trainer.py", line 20, in <module>
+    from magvit2 import (
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/__init__.py", line 15, in <module>
+    from .data import ImageDataset, VideoDataset
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/data.py", line 27, in <module>
+    from utils import _FUNCTIONAL_PAD
+ModuleNotFoundError: No module named 'utils'
+Traceback (most recent call last):
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/train_magvit2_trainer.py", line 20, in <module>
+    from magvit2 import (
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/__init__.py", line 16, in <module>
+    from .trainer import AdvancedVideoTokenizerTrainer
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/trainer.py", line 23, in <module>
+    from data import collate_tensors_and_strings
+ModuleNotFoundError: No module named 'data'
+/root/miniconda3/envs/paddle-develop/lib/python3.9/site-packages/_distutils_hack/__init__.py:33: UserWarning: Setuptools is replacing distutils.
+  warnings.warn("Setuptools is replacing distutils.")
+Traceback (most recent call last):
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/train_magvit2_trainer.py", line 20, in <module>
+    from magvit2 import (
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/__init__.py", line 17, in <module>
+    from .trainer_args import TrainerArguments
+  File "/root/project/paddlemix/magvit2/zhangxu/PaddleMIX/ppdiffusers/examples/video_tokenizer/magvit2_trainer/magvit2/trainer_args.py", line 31, in <module>
+    class TrainerArguments:
+  File "/root/miniconda3/envs/paddle-develop/lib/python3.9/dataclasses.py", line 1021, in dataclass
+    return wrap(cls)
+  File "/root/miniconda3/envs/paddle-develop/lib/python3.9/dataclasses.py", line 1013, in wrap
+    return _process_class(cls, init, repr, eq, order, unsafe_hash, frozen)
+  File "/root/miniconda3/envs/paddle-develop/lib/python3.9/dataclasses.py", line 863, in _process_class
+    cls_fields = [_get_field(cls, name, type)
+  File "/root/miniconda3/envs/paddle-develop/lib/python3.9/dataclasses.py", line 863, in <listcomp>
+    cls_fields = [_get_field(cls, name, type)
+  File "/root/miniconda3/envs/paddle-develop/lib/python3.9/dataclasses.py", line 747, in _get_field
+    raise ValueError(f'mutable default {type(f.default)} for field '
+ValueError: mutable default <class 'dict'> for field dataset_kwargs is not allowed: use default_factory

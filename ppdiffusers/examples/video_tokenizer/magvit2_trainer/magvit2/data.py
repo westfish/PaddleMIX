@@ -21,10 +21,10 @@ import paddle
 from beartype import beartype
 from beartype.door import is_bearable
 from beartype.typing import List, Tuple
+from components.utils import _FUNCTIONAL_PAD
 from einops import rearrange
 from paddle.vision.transforms import functional as F
 from PIL import Image
-from utils import _FUNCTIONAL_PAD
 
 
 def exists(val):

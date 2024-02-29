@@ -73,6 +73,8 @@ class TrainerArguments:
         # evaluation_strategy="steps"
         # eval_steps=100
     # checkpoint_every_step=100,
+        # save_steps
+        # save_total_limit
     num_frames: int = field(
         default=17,
         metadata={
@@ -132,24 +134,50 @@ class TrainerArguments:
 
 
 """
-TrainerArguments
 TrainingArguments
     optimizer
-        optim="adamw",
-        weight_decay=0.01,
-        adam_beta1=0.9, 
-        adam_beta2=0.99,
-        adam_epsilon=1e-08,
+        optim "adamw"
+        weight_decay 0.01
+        adam_beta1 0.9
+        adam_beta2 0.99
+        adam_epsilon 1e-08
     original
-        per_device_train_batch_size=1,
-        max_steps=50000,
-        learning_rate=1e-3,
-        gradient_accumulation_steps=1,
-        max_grad_norm=0.0,
-        output_dir="./checkpoints",
-        evaluation_strategy="steps",
-        eval_steps=100,
-        scheduler_type="constant",
+        per_device_train_batch_size 1
+        max_steps 50000
+        learning_rate=1e-3
+        gradient_accumulation_steps 1
+        max_grad_norm 0.0
+        output_dir "./checkpoints"
+        evaluation_strategy "steps"
+        eval_steps 100
+        save_steps 100
+        save_total_limit 50
+        scheduler_type "constant"
     others
-        do_eval=False
+        do_eval False
+        fp16_opt_level "O1"
+        bf16 True
+        recompute True
+        overwrite_output_dir True
+        dataloader_num_workers 8
+        logging_steps 50
+        logging_dir "./logging",
+        seed 0
+        overwrite_output_dir True
+        warmup_steps 0
+        disable_tqdm True
+TrainerArguments
+    original
+        dataset_folder 
+        dataset_type "videos"
+        results_folder "./results"
+        valid_frac 0.05
+        num_frames 17
+    advanced control
+        flash_attn True
+        dataloader_shuffle True
+    for custom_visualdl
+        resolution 256
+        benchmark False
+        image_logging_steps 1000
 """
