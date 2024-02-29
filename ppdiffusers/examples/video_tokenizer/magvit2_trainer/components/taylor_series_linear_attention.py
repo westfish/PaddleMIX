@@ -19,8 +19,9 @@ from typing import Optional
 import paddle
 from einops import pack, rearrange, repeat, unpack
 from einops.layers.paddle import Rearrange
-from rotary_embedding import RotaryEmbedding
-from utils import _FUNCTIONAL_PAD
+
+from .rotary_embedding import RotaryEmbedding
+from .utils import _FUNCTIONAL_PAD
 
 Cache = namedtuple("Cache", ["seq_len", "last_token", "kv_cumsum", "k_cumsum"])
 

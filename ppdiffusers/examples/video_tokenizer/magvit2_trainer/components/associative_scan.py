@@ -15,7 +15,8 @@
 from typing import Callable, Tuple
 
 import paddle
-from utils import _FUNCTIONAL_PAD
+
+from .utils import _FUNCTIONAL_PAD
 
 
 def pad_at_dim(t, pad, dim=-1, value=0.0):

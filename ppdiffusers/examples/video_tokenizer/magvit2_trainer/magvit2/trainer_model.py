@@ -21,17 +21,17 @@ from pathlib import Path
 
 import numpy as np
 import paddle
-from attend import Attend
 from beartype import beartype
 from beartype.typing import List, Optional, Tuple, Union
+from components.attend import Attend
+from components.filter3d import filter3d
+from components.finite_scalar_quantization import FSQ
+from components.lookup_free_quantization import LFQ
+from components.simplified_gate_loop import SimpleGateLoopLayer
+from components.taylor_series_linear_attention import TaylorSeriesLinearAttn
+from components.utils import _FUNCTIONAL_PAD
 from einops import pack, rearrange, reduce, repeat, unpack
 from einops.layers.paddle import Rearrange
-from filter3d import filter3d
-from finite_scalar_quantization import FSQ
-from lookup_free_quantization import LFQ
-from simplified_gate_loop import SimpleGateLoopLayer
-from taylor_series_linear_attention import TaylorSeriesLinearAttn
-from utils import _FUNCTIONAL_PAD
 
 
 def exists(v):

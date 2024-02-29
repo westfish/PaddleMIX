@@ -23,8 +23,6 @@ from beartype.typing import Literal, Optional, Union
 
 # from paddlenlp.utils.log import logger
 
-VideosOrImagesLiteral = Union[Literal["videos"], Literal["images"]]
-
 
 # fmt: off
 @dataclass
@@ -52,7 +50,7 @@ class TrainerArguments:
         default=None,
         metadata={"help": "The dataset folder."},
     )
-    dataset_type: VideosOrImagesLiteral = field(
+    dataset_type: Optional[str] = field(
         default="videos",
         metadata={"help": "dataset_type, one of `videos` or `images`"},
     )
@@ -96,7 +94,7 @@ class TrainerArguments:
     # optimizer_kwargs: dict = dict(),
         # Do not support, use TrainingArguments' relavant parameters
     dataset_kwargs: dict = field(
-        default=dict(),
+        default_factory=dict(),
         metadata={"help": "dataset_kwargs."},
     )
 

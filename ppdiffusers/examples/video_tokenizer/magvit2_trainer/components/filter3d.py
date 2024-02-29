@@ -15,7 +15,8 @@
 from typing import List
 
 import paddle
-from utils import _FUNCTIONAL_PAD
+
+from .utils import _FUNCTIONAL_PAD
 
 
 def _compute_padding(kernel_size: List[int]) -> List[int]:

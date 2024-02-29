@@ -15,9 +15,10 @@
 from typing import Tuple
 
 import paddle
-from associative_scan import associative_scan
 from einops import pack, unpack
 from einops.layers.paddle import Rearrange
+
+from .associative_scan import associative_scan
 
 
 def exists(v):

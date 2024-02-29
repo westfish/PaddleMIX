@@ -16,7 +16,8 @@ from functools import wraps
 
 import paddle
 from einops import rearrange
-from utils import _FUNCTIONAL_PAD, _STR_2_PADDLE_DTYPE
+
+from .utils import _FUNCTIONAL_PAD, _STR_2_PADDLE_DTYPE
 
 EfficientAttentionConfig = namedtuple(
     "EfficientAttentionConfig", ["enable_flash", "enable_math", "enable_mem_efficient"]
