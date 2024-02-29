@@ -217,9 +217,8 @@ class AdvancedVideoTokenizerTrainer(Trainer):
                     self.pop_callback(ProgressCallback)
 
     def compute_loss(self, model, inputs, return_outputs=False):
-
         loss, loss_breakdown = self.model(
-            inputs,
+            *inputs,
             return_loss=True,
             adversarial_loss_weight=0.0,
             multiscale_adversarial_loss_weight=0.0,

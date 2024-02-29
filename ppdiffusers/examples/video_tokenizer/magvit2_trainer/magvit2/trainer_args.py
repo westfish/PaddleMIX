@@ -86,7 +86,7 @@ class TrainerArguments:
     # warmup_steps=1000,
         # Do not supoort
     # scheduler: Optional[Type[paddle.optimizer.lr.LRScheduler]] = None,
-        # scheduler_type
+        # lr_scheduler_type
     # scheduler_kwargs: dict = dict(),
         # Do not support
     # ema_kwargs: dict = dict(),
@@ -94,7 +94,7 @@ class TrainerArguments:
     # optimizer_kwargs: dict = dict(),
         # Do not support, use TrainingArguments' relavant parameters
     dataset_kwargs: dict = field(
-        default_factory=dict(),
+        default_factory=dict,
         metadata={"help": "dataset_kwargs."},
     )
 
@@ -150,11 +150,12 @@ TrainingArguments
         eval_steps 100
         save_steps 100
         save_total_limit 50
-        scheduler_type "constant"
+        lr_scheduler_type "constant"
     others
         do_eval False
         fp16_opt_level "O1"
-        bf16 True
+        bf16 False
+        fp16 True
         recompute True
         overwrite_output_dir True
         dataloader_num_workers 8

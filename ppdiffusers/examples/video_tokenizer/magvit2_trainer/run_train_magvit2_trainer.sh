@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-python -u -m paddle.distributed.launch --gpus "0,1,2,3,4,5,6,7" train_magvit2_trainer.py \
+log_dir="/root/project/paddlemix/magvit2/zhangxu/drawer/log"
+# python -u -m paddle.distributed.launch --gpus "0,1,2,3,4,5,6,7" --log_dir ${log_dir} train_magvit2_trainer.py \
+python -u train_magvit2_trainer.py \
     --optim "adamw" \
     --weight_decay 0.01 \
     --adam_beta1 0.9 \
@@ -26,10 +28,11 @@ python -u -m paddle.distributed.launch --gpus "0,1,2,3,4,5,6,7" train_magvit2_tr
     --output_dir "./checkpoints" \
     --evaluation_strategy "steps" \
     --eval_steps 100 \
-    --scheduler_type "constant" \
+    --lr_scheduler_type "constant" \
     --do_eval False \
     --fp16_opt_level "O1" \
-    --bf16 True \
+    --bf16 False \
+    --fp16 True \
     --recompute True \
     --overwrite_output_dir True \
     --dataloader_num_workers 8 \
@@ -44,7 +47,7 @@ python -u -m paddle.distributed.launch --gpus "0,1,2,3,4,5,6,7" train_magvit2_tr
     --results_folder "./results" \
     --valid_frac 0.05 \
     --num_frames 17 \
-    --flash_attn True \
+    --flash_attn False \
     --dataloader_shuffle True \
     --resolution 256 \
     --benchmark False \
