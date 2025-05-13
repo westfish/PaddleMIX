@@ -2,8 +2,8 @@ import os
 import argparse
 import paddle
 
-from tgate import TgateSDXLLoader, TgateSDXLDeepCacheLoader, TgatePixArtAlphaLoader, TgateSVDLoader
-from ppdiffusers import StableDiffusionXLPipeline, PixArtAlphaPipeline, StableVideoDiffusionPipeline
+from tgate import TgateSDXLLoader, TgateSD3Loader, TgatePixArtAlphaLoader, TgateSVDLoader
+from ppdiffusers import StableDiffusionXLPipeline, StableDiffusion3Pipeline, PixArtAlphaPipeline, StableVideoDiffusionPipeline
 from ppdiffusers import UNet2DConditionModel, LCMScheduler
 from ppdiffusers import DPMSolverMultistepScheduler
 from ppdiffusers.utils import load_image, export_to_video
@@ -101,14 +101,7 @@ if __name__ == '__main__':
             paddle_dtype=paddle.float16, 
             variant="fp16", 
         )
-        if args.deepcache:
-            pipe = TgateSDXLDeepCacheLoader(
-                pipe,
-                cache_interval=3,
-                cache_branch_id=0
-            )
-        else:
-            pipe = TgateSDXLLoader(pipe)
+        pipe = TgateSDXLLoader(pipe)
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
 
         image = pipe.tgate(
@@ -210,5 +203,20 @@ if __name__ == '__main__':
         ).frames[0]
         export_to_video(frames, saved_path, fps=7)
 
+    elif args.model == "sd3":
+        pipe = StableDiffusion3Pipeline.from_pretrained(
+            "stabilityai/stable-diffusion-3-medium-diffusers", paddle_dtype=paddle.float16)
+        pipe = TgateSD3Loader(pipe)
+        image = pipe.tgate(
+            prompt=args.prompt,
+            gate_step=args.gate_step,
+            sp_interval=args.sp_interval ,
+            fi_interval=args.fi_interval,
+            warm_up=args.warm_up,
+            num_inference_steps=args.inference_step,
+            generator=generator,
+        ).images[0]
+        image.save(saved_path)
     else:
         raise Exception('Please sepcify the model name!')
+

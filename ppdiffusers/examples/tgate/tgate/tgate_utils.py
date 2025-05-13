@@ -15,6 +15,7 @@ def register_forward(
     keep_shape: bool = True,
     sa_kward: dict = None,
     ca_kward: dict = None,
+    tgate_processor_type: str = None,
     **kwargs,
 ):
     """
@@ -43,6 +44,7 @@ def register_forward(
         keep_shape:bool = True,
         ca_kward: dict = None,
         sa_kward: dict = None,
+        tgate_processor_type: str = None,
         **kwargs,
     ):
         def forward(
@@ -78,6 +80,8 @@ def register_forward(
 
             if not hasattr(self,'cache'):
                 self.cache = None
+            if not hasattr(self,'cache1'):
+                self.cache1 = None
             attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
             unused_kwargs = [k for k, _ in cross_attention_kwargs.items() if k not in attn_parameters]
             
@@ -87,20 +91,45 @@ def register_forward(
                 )
             
             cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
-            
-            hidden_states, cache =  tgate_processor(
-                self,
-                hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                attention_mask=attention_mask,
-                keep_shape = keep_shape,
-                cache = self.cache,
-                ca_cache = ca_cache,
-                sa_cache = sa_cache,
-                ca_reuse = ca_reuse,
-                sa_reuse = sa_reuse,
-                **cross_attention_kwargs,
-            )
+            if tgate_processor_type == "sd3":
+                states =  tgate_processor_sd3(
+                    self,
+                    hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    attention_mask=attention_mask,
+                    keep_shape = keep_shape,
+                    cache = self.cache,
+                    cache1 = self.cache1,
+                    ca_cache = ca_cache,
+                    sa_cache = sa_cache,
+                    ca_reuse = ca_reuse,
+                    sa_reuse = sa_reuse,
+                    **cross_attention_kwargs,
+                )
+            else:
+                states =  tgate_processor(
+                    self,
+                    hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    attention_mask=attention_mask,
+                    keep_shape = keep_shape,
+                    cache = self.cache,
+                    ca_cache = ca_cache,
+                    sa_cache = sa_cache,
+                    ca_reuse = ca_reuse,
+                    sa_reuse = sa_reuse,
+                    **cross_attention_kwargs,
+                )
+            if len(states) == 4:
+                hidden_states, encoder_hidden_states, cache, cache1 = states
+                if cache1 is not None:
+                    self.cache1 = cache1
+                if cache is not None:
+                    self.cache = cache
+                return hidden_states, encoder_hidden_states
+            elif len(states) == 2:
+                hidden_states, cache = states
+
             if cache is not None:
                 self.cache = cache
             return hidden_states
@@ -111,17 +140,18 @@ def register_forward(
         count: int = None, 
         keep_shape:bool = True, 
         ca_kward:dict = None,
-        sa_kward:dict = None
+        sa_kward:dict = None,
+        tgate_processor_type: str = None,
     ):
         if net.__class__.__name__ == filter_name:
-            net.forward = warp_custom(net, keep_shape = keep_shape, ca_kward = ca_kward,sa_kward = sa_kward)
+            net.forward = warp_custom(net, keep_shape = keep_shape, ca_kward = ca_kward,sa_kward = sa_kward, tgate_processor_type = tgate_processor_type)
             return count + 1
         elif hasattr(net, 'children'):
             for net_child in net.children():
-                count = register_recr(net_child, count, keep_shape = keep_shape, ca_kward = ca_kward,sa_kward = sa_kward)
+                count = register_recr(net_child, count, keep_shape = keep_shape, ca_kward = ca_kward, sa_kward = sa_kward, tgate_processor_type = tgate_processor_type)
         return count
 
-    return register_recr(model, count, keep_shape = keep_shape, ca_kward = ca_kward,sa_kward = sa_kward) 
+    return register_recr(model, count, keep_shape = keep_shape, ca_kward = ca_kward,sa_kward = sa_kward, tgate_processor_type=tgate_processor_type) 
 
 
 def tgate_processor(
@@ -249,6 +279,133 @@ def tgate_processor(
     return hidden_states, cache
 
 
+def tgate_processor_sd3(
+    attn: None,
+    hidden_states: paddle.Tensor,
+    encoder_hidden_states: paddle.Tensor = None,
+    attention_mask: Optional[paddle.Tensor] = None,
+    cache = None,
+    cache1 = None,
+    keep_shape = True,
+    ca_cache = False,
+    sa_cache = False,
+    ca_reuse = False,
+    sa_reuse = False,
+    *args,
+    **kwargs,
+) -> paddle.Tensor:
+    if not hasattr(F, "scaled_dot_product_attention"):
+        raise ImportError("Paddle version does not support scaled dot product attention")
+
+    if len(args) > 0 or kwargs.get("scale", None) is not None:
+        deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
+        deprecate("scale", "1.0.0", deprecation_message)
+
+    residual = hidden_states
+
+    cross_attn = encoder_hidden_states is not None
+    self_attn =  encoder_hidden_states is None
+   
+    if cross_attn and ca_reuse and cache is not None:
+        hidden_states = cache
+        if cache1 is not None:
+            encoder_hidden_states = cache1
+    elif self_attn and sa_reuse and cache is not None:
+        hidden_states = cache
+    else:
+
+        residual = hidden_states
+
+        batch_size = hidden_states.shape[0]
+
+        # `sample` projections.
+        query = attn.to_q(hidden_states)
+        key = attn.to_k(hidden_states)
+        value = attn.to_v(hidden_states)
+
+        inner_dim = key.shape[-1]
+        head_dim = inner_dim // attn.heads
+        query = query.reshape([batch_size, -1, attn.heads, head_dim])
+        key = key.reshape([batch_size, -1, attn.heads, head_dim])
+        value = value.reshape([batch_size, -1, attn.heads, head_dim])
+
+        if attn.norm_q is not None:
+            query = attn.norm_q(query, begin_norm_axis=3)
+        if attn.norm_k is not None:
+            key = attn.norm_k(key, begin_norm_axis=3)
+
+        # `context` projections.
+        if encoder_hidden_states is not None:
+            encoder_hidden_states_query_proj = attn.add_q_proj(encoder_hidden_states)
+            encoder_hidden_states_key_proj = attn.add_k_proj(encoder_hidden_states)
+            encoder_hidden_states_value_proj = attn.add_v_proj(encoder_hidden_states)
+
+            encoder_hidden_states_query_proj = encoder_hidden_states_query_proj.reshape(
+                [batch_size, -1, attn.heads, head_dim]
+            )
+            encoder_hidden_states_key_proj = encoder_hidden_states_key_proj.reshape(
+                [batch_size, -1, attn.heads, head_dim]
+            )
+            encoder_hidden_states_value_proj = encoder_hidden_states_value_proj.reshape(
+                [batch_size, -1, attn.heads, head_dim]
+            )
+
+            if attn.norm_added_q is not None:
+                encoder_hidden_states_query_proj = attn.norm_added_q(
+                    encoder_hidden_states_query_proj, begin_norm_axis=3
+                )
+            if attn.norm_added_k is not None:
+                encoder_hidden_states_key_proj = attn.norm_added_k(encoder_hidden_states_key_proj, begin_norm_axis=3)
+
+            query = paddle.concat([query, encoder_hidden_states_query_proj], axis=1)
+            key = paddle.concat([key, encoder_hidden_states_key_proj], axis=1)
+            value = paddle.concat([value, encoder_hidden_states_value_proj], axis=1)
+
+        hidden_states = hidden_states = F.scaled_dot_product_attention_(
+            query, key, value, dropout_p=0.0, is_causal=False
+        )
+        hidden_states = hidden_states.reshape([batch_size, -1, attn.heads * head_dim])
+        hidden_states = hidden_states.astype(query.dtype)
+
+        if encoder_hidden_states is not None:
+            # Split the attention outputs.
+            hidden_states, encoder_hidden_states = (
+                hidden_states[:, : residual.shape[1]],
+                hidden_states[:, residual.shape[1] :],
+            )
+            if not attn.context_pre_only:
+                encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
+
+        # linear proj
+        hidden_states = attn.to_out[0](hidden_states)
+        # dropout
+        hidden_states = attn.to_out[1](hidden_states)
+
+        if encoder_hidden_states is not None:
+            if (cross_attn and ca_cache):
+                if keep_shape:
+                    cache = hidden_states
+                    cache1 = encoder_hidden_states
+                else:
+                    cache = hidden_states
+                    cache1 = encoder_hidden_states
+            else:
+                cache = None
+                cache1 = None
+
+        else:
+            if (cross_attn and ca_cache) or (self_attn and sa_cache):
+                if keep_shape:
+                    cache = hidden_states
+                else:
+                    cache = hidden_states
+            else:
+                cache = None
+
+    if encoder_hidden_states is not None:
+        return hidden_states, encoder_hidden_states, cache, cache1
+    else:
+        return hidden_states, cache
 
 
 
