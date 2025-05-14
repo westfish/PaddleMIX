@@ -88,7 +88,7 @@ def teacache_forward(
                     else:
                         should_calc = True
                         self.accumulated_rel_l1_distance = 0
-                self.previous_modulated_input = modulated_inp 
+                self.previous_modulated_input = modulated_inp.clone() 
                 self.cnt += 1 
                 if self.cnt == self.num_steps:
                     self.cnt = 0  
@@ -192,15 +192,14 @@ SD3Transformer2DModel.forward = teacache_forward
 num_inference_steps = 28
 seed = 42
 prompt = "An image of a squirrel in Picasso style"
+# prompt = "A cat holding a sign that says hello world"
 pipeline = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-3-medium-diffusers", paddle_dtype=paddle.float16)
 # TeaCache
 pipeline.transformer.__class__.enable_teacache = True
 pipeline.transformer.__class__.cnt = 0
 pipeline.transformer.__class__.num_steps = num_inference_steps
-pipeline.transformer.__class__.rel_l1_thresh = 0.6 # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
+pipeline.transformer.__class__.rel_l1_thresh = 0.25 # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
 pipeline.transformer.__class__.accumulated_rel_l1_distance = 0
-pipeline.transformer.__class__.previous_modulated_input = None
-pipeline.transformer.__class__.previous_residual = None
 
 
 img = pipeline(
