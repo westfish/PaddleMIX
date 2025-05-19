@@ -6,6 +6,8 @@ from ppdiffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unsc
 from paddle.distributed.fleet.utils import recompute
 import paddle
 import numpy as np
+import argparse
+import os
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -188,23 +190,73 @@ def teacache_forward(
 
         return Transformer2DModelOutput(sample=output)
 
-SD3Transformer2DModel.forward = teacache_forward
-num_inference_steps = 28
-seed = 42
-prompt = "An image of a squirrel in Picasso style"
-# prompt = "A cat holding a sign that says hello world"
-pipeline = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-3-medium-diffusers", paddle_dtype=paddle.float16)
-# TeaCache
-pipeline.transformer.__class__.enable_teacache = True
-pipeline.transformer.__class__.cnt = 0
-pipeline.transformer.__class__.num_steps = num_inference_steps
-pipeline.transformer.__class__.rel_l1_thresh = 0.25 # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
-pipeline.transformer.__class__.accumulated_rel_l1_distance = 0
+def parse_args():
+    parser = argparse.ArgumentParser(description="TeaCache Stable Diffusion 3 Example")
+    
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        default="A cat holding a sign that says hello world",
+        help="Text prompt for image generation",
+    )
+    
+    parser.add_argument(
+        "--saved_path",
+        type=str,
+        default='./outputs',
+        help="Path to save generated images",
+    )
+    
+    parser.add_argument(
+        "--inference_step",
+        type=int,
+        default=28,
+        help="Number of inference steps",
+    )
+    
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Random seed for reproducible results',
+    )
+    
+    parser.add_argument(
+        '--rel_l1_thresh',
+        type=float,
+        default=0.8,
+        help='Threshold for TeaCache optimization (0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup)',
+    )
+    
+    args = parser.parse_args()
+    return args
 
 
-img = pipeline(
-    prompt, 
-    num_inference_steps=num_inference_steps,
-    generator=paddle.Generator().manual_seed(seed),
+if __name__ == "__main__":
+    SD3Transformer2DModel.forward = teacache_forward
+    
+    args = parse_args()
+    os.makedirs(args.saved_path, exist_ok=True)
+    pipeline = DiffusionPipeline.from_pretrained(
+        "stabilityai/stable-diffusion-3-medium-diffusers", 
+        paddle_dtype=paddle.float16
+    )
+    
+    # Setup TeaCache parameters
+    pipeline.transformer.__class__.enable_teacache = True
+    pipeline.transformer.__class__.cnt = 0
+    pipeline.transformer.__class__.num_steps = args.inference_step
+    pipeline.transformer.__class__.rel_l1_thresh = args.rel_l1_thresh
+    pipeline.transformer.__class__.accumulated_rel_l1_distance = 0
+    
+    img = pipeline(
+        args.prompt, 
+        num_inference_steps=args.inference_step,
+        generator=paddle.Generator().manual_seed(args.seed),
     ).images[0]
-img.save("{}.png".format('TeaCache_' + prompt))
+    
+    output_filename = os.path.join(args.saved_path, f"TeaCache_{args.prompt}.png")
+    img.save(output_filename)
+    
+    print(f"Image generated successfully and saved to {output_filename}")
+    print(f"Parameters used: steps={args.inference_step}, seed={args.seed}, rel_l1_thresh={args.rel_l1_thresh}")
