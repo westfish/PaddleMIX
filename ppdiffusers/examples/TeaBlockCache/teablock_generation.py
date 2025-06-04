@@ -324,10 +324,7 @@ def main():
         pipe.transformer.block_heuristic_states = {}
         pipe.transformer.single_block_heuristic_states = {}
         
-        if args.dataset == "coco10k":
-            saved_path = os.path.join(args.saved_path, f"teablock_{args.inference_step}steps")
-        else:
-            saved_path = os.path.join(args.saved_path, f"teablock_{args.inference_step}steps_{args.dataset}")
+        saved_path = os.path.join(args.saved_path, f"teablock_{args.inference_step}steps_{args.step_start}_{args.step_end}_{args.block_cache_start}_{args.single_block_cache_start}_{args.block_rel_l1_thresh}_{args.single_block_rel_l1_thresh}_{args.dataset}")
         os.makedirs(saved_path, exist_ok=True)
         
         print(f"=== Generating with TeaBlockCache ({len(all_prompts)} images) ===")
