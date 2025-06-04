@@ -206,7 +206,7 @@ def main():
     # Original FLUX generation
     if args.origin == True:
         pipe = FluxPipeline.from_pretrained(
-            "black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16
+            "black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.bfloat16
         )
         if args.dataset == "coco10k":
             saved_path = os.path.join(args.saved_path, f"origin_{args.inference_step}steps")
@@ -237,7 +237,7 @@ def main():
     # TGate method
     if args.tgate == True and TGATE_AVAILABLE:
         pipe = FluxPipeline.from_pretrained(
-            "black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
+            "black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.bfloat16)
         pipe = TgateFLUXLoader(pipe)
         saved_path = os.path.join(args.saved_path, f"tgate_{args.inference_step}steps")
         os.makedirs(saved_path, exist_ok=True)
@@ -266,7 +266,7 @@ def main():
 
     # TeaCache method
     if args.teacache == True and TEACACHE_AVAILABLE:
-        pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
+        pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.bfloat16)
         
         FluxTransformer2DModel.forward = TeaCacheForward
         pipe.transformer.enable_teacache = True
@@ -305,7 +305,7 @@ def main():
 
     # TeaBlockCache method  
     if args.teablock == True:
-        pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
+        pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.bfloat16)
         
         # Replace forward method with TeaBlockCache
         FluxTransformer2DModel.forward = TeaBlockCacheForward

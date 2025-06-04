@@ -20,7 +20,7 @@ from ppdiffusers import FluxPipeline
 from ppdiffusers.models.transformer_flux import FluxTransformer2DModel
 
 # Load the pipeline
-pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
+pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.bfloat16)
 
 # Replace the forward method with our hybrid caching strategy
 FluxTransformer2DModel.forward = TeaBlockCacheForward
