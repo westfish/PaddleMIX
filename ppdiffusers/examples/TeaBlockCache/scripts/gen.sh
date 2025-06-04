@@ -1,15 +1,16 @@
-CUDA_VISIBLE_DEVICES=1 nohup python generation.py \
---model 'flux' \
---step_start 100
---step_end 900
---block_cache_start 3
---single_block_cache_start 3
---block_rel_l1_thresh 0.3
---single_block_rel_l1_thresh 0.3
+export FLAGS_sdpa_select_math=yes 
+
+CUDA_VISIBLE_DEVICES=1 python teablock_generation.py \
+--step_start 100 \
+--step_end 900 \
+--block_cache_start 3 \
+--single_block_cache_start 3 \
+--block_rel_l1_thresh 0.3 \
+--single_block_rel_l1_thresh 0.3 \
 --inference_step 50 \
 --teablock \
 --seed 124 \
---saved_path /root/paddlejob/workspace/env_run/zx/output
+--saved_path /root/paddlejob/workspace/env_run/zx/output/computation_cache
 
 
 
