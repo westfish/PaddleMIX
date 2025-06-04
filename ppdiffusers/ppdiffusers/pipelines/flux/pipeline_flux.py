@@ -844,6 +844,8 @@ class FluxPipeline(
             )
 
         # 6. Denoising loop
+        import time
+        start_time = time.time()
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -898,6 +900,8 @@ class FluxPipeline(
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
+        end_time = time.time()
+        print(f"Time taken: {end_time - start_time} seconds")
 
         if output_type == "latent":
             image = latents
