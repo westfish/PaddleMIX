@@ -34,10 +34,6 @@ def TeaBlockCacheForward(
             'transformer_blocks_heuristic_total_part1': 0.0,
             'transformer_blocks_heuristic_total_part2': 0.0,
             'transformer_blocks_heuristic_total_part3': 0.0,
-            'transformer_blocks_heuristic_total_part31': 0.0,
-            'transformer_blocks_heuristic_total_part32': 0.0,
-            'transformer_blocks_heuristic_total_part33': 0.0,
-
             'single_blocks_heuristic_total':     0.0,
         }
 
@@ -145,28 +141,13 @@ def TeaBlockCacheForward(
                     modulated_inp = norm_result
 
                 if block_state['previous_modulated_input'] is not None:
-                    _t_heuristic_start_part_31 = time.perf_counter()
-                    # rel_change = paddle.linalg.norm(modulated_inp - block_state['previous_modulated_input'], 1) / paddle.linalg.norm(block_state['previous_modulated_input'], 1)
-                    hidden_dim = modulated_inp.shape[-1]
-                    C = max(1, hidden_dim // 100) 
-                    mod_head = modulated_inp[:, :, :C]
-                    prev_head = block_state['previous_modulated_input'][:, :, :C]
-                    rel_change = paddle.linalg.norm(mod_head - prev_head, 1) / paddle.linalg.norm(prev_head, 1)
-                    _timings['transformer_blocks_heuristic_total_part31'] += time.perf_counter() - _t_heuristic_start_part_31
-                    _t_heuristic_start_part_32 = time.perf_counter()
-
+                    rel_change = (
+                        (modulated_inp - block_state['previous_modulated_input']).abs().mean()
+                        / block_state['previous_modulated_input'].abs().mean()
+                    ).cpu().item()
                     coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
-
-                    # rescale_func = np.poly1d(coefficients)
-                    # block_state['accumulated_distance'] += rescale_func(rel_change)
-                    # Horner 法按 GPU Tensor 依次累乘求多项式
-                    coeffs = paddle.to_tensor(coefficients)   # << 第 4 点说明
-                    rescale = coeffs[0]
-                    for i in range(1, 5):
-                        rescale = rescale * rel_change + coeffs[i]
-                    block_state['accumulated_distance'] += rescale
-                    _timings['transformer_blocks_heuristic_total_part32'] += time.perf_counter() - _t_heuristic_start_part_32
-                    _t_heuristic_start_part_33 = time.perf_counter()
+                    rescale_func = np.poly1d(coefficients)
+                    block_state['accumulated_distance'] += rescale_func(rel_change)
 
                     if block_state['accumulated_distance'] < self.block_rel_l1_thresh:
                         should_compute_block = False
@@ -177,7 +158,6 @@ def TeaBlockCacheForward(
                     should_compute_block = True
 
                 block_state['previous_modulated_input'] = modulated_inp.clone()
-                _timings['transformer_blocks_heuristic_total_part33'] += time.perf_counter() - _t_heuristic_start_part_33
                 _timings['transformer_blocks_heuristic_total_part3'] += time.perf_counter() - _t_heuristic_start_part_3
             else:
                 should_compute_block = True
@@ -282,23 +262,13 @@ def TeaBlockCacheForward(
                     modulated_inp = norm_result
 
                 if block_state['previous_modulated_input'] is not None:
-                    # rel_change = paddle.linalg.norm(modulated_inp - block_state['previous_modulated_input'], 1) / paddle.linalg.norm(block_state['previous_modulated_input'], 1)
-                    hidden_dim = modulated_inp.shape[-1]
-                    C = max(1, hidden_dim // 100) 
-                    mod_head = modulated_inp[:, :, :C]
-                    prev_head = block_state['previous_modulated_input'][:, :, :C]
-                    rel_change = paddle.linalg.norm(mod_head - prev_head, 1) / paddle.linalg.norm(prev_head, 1)
-                    
+                    rel_change = (
+                        (modulated_inp - block_state['previous_modulated_input']).abs().mean()
+                        / block_state['previous_modulated_input'].abs().mean()
+                    ).cpu().item()
                     coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
-
-                    # rescale_func = np.poly1d(coefficients)
-                    # block_state['accumulated_distance'] += rescale_func(rel_change)
-                    # Horner 法按 GPU Tensor 依次累乘求多项式
-                    coeffs = paddle.to_tensor(coefficients).astype('float32')   # << 第 4 点说明
-                    rescale = coeffs[0]
-                    for i in range(1, 5):
-                        rescale = rescale * rel_change + coeffs[i]
-                    block_state['accumulated_distance'] += rescale
+                    rescale_func = np.poly1d(coefficients)
+                    block_state['accumulated_distance'] += rescale_func(rel_change)
 
                     if block_state['accumulated_distance'] < self.single_block_rel_l1_thresh:
                         should_compute_block = False
