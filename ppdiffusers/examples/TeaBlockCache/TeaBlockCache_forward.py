@@ -31,6 +31,9 @@ def TeaBlockCacheForward(
         _t_forward_start = time.perf_counter()
         _timings: Dict[str, float] = {
             'transformer_blocks_heuristic_total': 0.0,
+            'transformer_blocks_heuristic_total_part1': 0.0,
+            'transformer_blocks_heuristic_total_part2': 0.0,
+            'transformer_blocks_heuristic_total_part3': 0.0,
             'single_blocks_heuristic_total':     0.0,
         }
 
@@ -105,6 +108,7 @@ def TeaBlockCacheForward(
             # === 新增：单 block 起始时间（统计总 loop 用） ===
             _t_block_start = time.perf_counter()
             _t_heuristic_start = time.perf_counter()
+            _t_heuristic_start_part_1 = time.perf_counter()
 
             if index_block not in self.block_heuristic_states:
                 self.block_heuristic_states[index_block] = {
@@ -117,13 +121,18 @@ def TeaBlockCacheForward(
 
             block_state = self.block_heuristic_states[index_block]
             should_compute_block = force_compute
+            _timings['transformer_blocks_heuristic_total_part1'] += time.perf_counter() - _t_heuristic_start_part_1
+            _t_heuristic_start_part_2 = time.perf_counter()
 
             # === 新增：heuristic 段计时 ===
 
             if not force_compute and is_within_time_range and index_block >= self.block_cache_start:
                 inp = hidden_states.clone()
                 temb_ = temb.clone()
-                norm_result = inp
+                norm_result = block.norm1(inp, emb=temb_)
+                _timings['transformer_blocks_heuristic_total_part2'] += time.perf_counter() - _t_heuristic_start_part_2
+                _t_heuristic_start_part_3 = time.perf_counter()
+
                 if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                     modulated_inp = norm_result[0]
                 elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
@@ -149,12 +158,13 @@ def TeaBlockCacheForward(
                     should_compute_block = True
 
                 block_state['previous_modulated_input'] = modulated_inp.clone()
+                _timings['transformer_blocks_heuristic_total_part3'] += time.perf_counter() - _t_heuristic_start_part_3
             else:
                 should_compute_block = True
                 if is_within_time_range and index_block >= self.block_cache_start:
                     inp = hidden_states.clone()
                     temb_ = temb.clone()
-                    norm_result = inp
+                    norm_result = block.norm1(inp, emb=temb_)
                     if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                         modulated_inp = norm_result[0]
                     elif isinstance(norm_result, tuple) and len(norm_result) >= 1:

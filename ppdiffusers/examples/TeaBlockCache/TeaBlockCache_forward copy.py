@@ -120,8 +120,8 @@ def TeaBlockCacheForward(
                 # Calculate modulated input (like TeaCache) for more accurate change detection
                 inp = hidden_states.clone()
                 temb_ = temb.clone()
-                # norm_result = block.norm1(inp, emb=temb_)
-                norm_result = inp
+                norm_result = block.norm1(inp, emb=temb_)
+                # norm_result = inp
                 # Handle different return formats safely
                 if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                     modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
@@ -160,8 +160,8 @@ def TeaBlockCacheForward(
                     # Still compute modulated input for future comparisons
                     inp = hidden_states.clone()
                     temb_ = temb.clone()
-                    # norm_result = block.norm1(inp, emb=temb_)
-                    norm_result = inp
+                    norm_result = block.norm1(inp, emb=temb_)
+                    # norm_result = inp
                     # Handle different return formats safely
                     if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                         modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
