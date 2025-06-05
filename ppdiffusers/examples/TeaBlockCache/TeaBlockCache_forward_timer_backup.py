@@ -118,10 +118,10 @@ def TeaBlockCacheForward(
             
             if not force_compute and is_within_time_range and index_block >= self.block_cache_start:
                 # Calculate modulated input (like TeaCache) for more accurate change detection
-                inp = hidden_states.clone()
-                temb_ = temb.clone()
-                norm_result = block.norm1(inp, emb=temb_)
-                # norm_result = inp
+                inp = hidden_states
+                temb_ = temb
+                # norm_result = block.norm1(inp, emb=temb_)
+                norm_result = inp
                 # Handle different return formats safely
                 if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                     modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
@@ -153,15 +153,15 @@ def TeaBlockCacheForward(
                     should_compute_block = True
                 
                 # Update previous modulated input
-                block_state['previous_modulated_input'] = modulated_inp.clone()
+                block_state['previous_modulated_input'] = modulated_inp
             else:
                 should_compute_block = True
                 if is_within_time_range and index_block >= self.block_cache_start:
                     # Still compute modulated input for future comparisons
-                    inp = hidden_states.clone()
-                    temb_ = temb.clone()
-                    norm_result = block.norm1(inp, emb=temb_)
-                    # norm_result = inp
+                    inp = hidden_states
+                    temb_ = temb
+                    # norm_result = block.norm1(inp, emb=temb_)
+                    norm_result = inp
                     # Handle different return formats safely
                     if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                         modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
@@ -169,7 +169,7 @@ def TeaBlockCacheForward(
                         modulated_inp = norm_result[0]
                     else:
                         modulated_inp = norm_result
-                    block_state['previous_modulated_input'] = modulated_inp.clone()
+                    block_state['previous_modulated_input'] = modulated_inp
 
             if should_compute_block:
                 # Compute the block
@@ -202,8 +202,8 @@ def TeaBlockCacheForward(
                 
                 # Cache the outputs
                 if is_within_time_range and index_block >= self.block_cache_start:
-                    block_state['cached_output'] = hidden_states.clone()
-                    block_state['cached_encoder_output'] = encoder_hidden_states.clone()
+                    block_state['cached_output'] = hidden_states
+                    block_state['cached_encoder_output'] = encoder_hidden_states
                 
                 # controlnet residual
                 if controlnet_block_samples is not None:
@@ -243,9 +243,10 @@ def TeaBlockCacheForward(
             
             if not force_compute and is_within_time_range and index_block >= self.single_block_cache_start:
                 # Calculate modulated input for single blocks (they have norm layer too)
-                inp = hidden_states.clone()
-                temb_ = temb.clone()
-                norm_result = block.norm(inp, emb=temb_)
+                inp = hidden_states
+                temb_ = temb
+                # norm_result = block.norm(inp, emb=temb_)
+                norm_result = inp
                 # Handle different return formats safely
                 if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                     modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
@@ -277,14 +278,15 @@ def TeaBlockCacheForward(
                     should_compute_block = True
                 
                 # Update previous modulated input
-                block_state['previous_modulated_input'] = modulated_inp.clone()
+                block_state['previous_modulated_input'] = modulated_inp
             else:
                 should_compute_block = True
                 if is_within_time_range and index_block >= self.single_block_cache_start:
                     # Still compute modulated input for future comparisons
-                    inp = hidden_states.clone()
-                    temb_ = temb.clone()
-                    norm_result = block.norm(inp, emb=temb_)
+                    inp = hidden_states
+                    temb_ = temb
+                    # norm_result = block.norm(inp, emb=temb_)
+                    norm_result = inp
                     # Handle different return formats safely
                     if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                         modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
@@ -292,7 +294,7 @@ def TeaBlockCacheForward(
                         modulated_inp = norm_result[0]
                     else:
                         modulated_inp = norm_result
-                    block_state['previous_modulated_input'] = modulated_inp.clone()
+                    block_state['previous_modulated_input'] = modulated_inp
 
             if should_compute_block:
                 # Compute the block
@@ -323,7 +325,7 @@ def TeaBlockCacheForward(
                 
                 # Cache the output
                 if is_within_time_range and index_block >= self.single_block_cache_start:
-                    block_state['cached_output'] = hidden_states.clone()
+                    block_state['cached_output'] = hidden_states
                 
                 # controlnet residual
                 if controlnet_single_block_samples is not None:

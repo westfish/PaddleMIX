@@ -42,12 +42,12 @@ def mock_transformer_model():
     class MockModel:
         def __init__(self):
             # 模拟模型参数
-            self.step_start = 200
-            self.step_end = 800
-            self.block_cache_start = 5
-            self.single_block_cache_start = 10
-            self.block_rel_l1_thresh = 0.1
-            self.single_block_rel_l1_thresh = 0.1
+            self.step_start = 0
+            self.step_end = 1000
+            self.block_cache_start = 0
+            self.single_block_cache_start = 0
+            self.block_rel_l1_thresh = 0
+            self.single_block_rel_l1_thresh = 0
             self.num_steps = 50
             self.cnt = 0
             self.training = False
@@ -88,7 +88,7 @@ def run_profiling_test():
     hidden_states = paddle.randn([batch_size, seq_length, hidden_dim])
     encoder_hidden_states = paddle.randn([batch_size, 77, hidden_dim])
     pooled_projections = paddle.randn([batch_size, 128])
-    timestep = paddle.tensor([500.0])
+    timestep = paddle.to_tensor([500.0])
     img_ids = paddle.randn([seq_length - 77, 3])
     txt_ids = paddle.randn([77, 3])
     

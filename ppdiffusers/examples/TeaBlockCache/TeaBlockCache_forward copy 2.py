@@ -4,8 +4,12 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
-from ppdiffusers.models.modeling_outputs import  Transformer2DModelOutput
+from ppdiffusers.models.modeling_outputs import Transformer2DModelOutput
 from ppdiffusers.utils import USE_PEFT_BACKEND, is_torch_version, logger, scale_lora_layers, unscale_lora_layers
+
+# === 新增 ===
+import time
+
 
 def TeaBlockCacheForward(
         self,
@@ -22,12 +26,17 @@ def TeaBlockCacheForward(
         return_dict: bool = True,
         controlnet_blocks_repeat: bool = False,
     ) -> Union[paddle.Tensor, Transformer2DModelOutput]:
-        """
-        A hybrid caching strategy that combines time and block dimension partitioning with heuristic caching.
-        
-        This method extends TeaCache's heuristic approach to work on a per-block basis,
-        allowing for more fine-grained control over computation.
-        """
+
+        # === 新增：整体计时 ===
+        _t_forward_start = time.perf_counter()
+        _timings: Dict[str, float] = {
+            'transformer_blocks_heuristic_total': 0.0,
+            'transformer_blocks_heuristic_total_part1': 0.0,
+            'transformer_blocks_heuristic_total_part2': 0.0,
+            'transformer_blocks_heuristic_total_part3': 0.0,
+            'single_blocks_heuristic_total':     0.0,
+        }
+
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
             lora_scale = joint_attention_kwargs.pop("scale", 1.0)
@@ -35,7 +44,6 @@ def TeaBlockCacheForward(
             lora_scale = 1.0
 
         if USE_PEFT_BACKEND:
-            # weight the lora layers by setting `lora_scale` for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
             if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
@@ -79,29 +87,29 @@ def TeaBlockCacheForward(
             ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
             joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
 
-        # Initialize per-block heuristic states if not exists
         if not hasattr(self, 'block_heuristic_states'):
             self.block_heuristic_states = {}
             self.single_block_heuristic_states = {}
-            
-        # Check if we're in cache-enabled time range
+
         is_within_time_range = self.step_start <= timestep <= self.step_end
-        
-        # Reset states at the beginning of generation
+
         if timestep == 1000 or self.cnt == 0:
             self.block_heuristic_states = {}
             self.single_block_heuristic_states = {}
             self.cnt = 0
 
-        # Global step counter
         self.cnt += 1
-        
-        # Force computation at first and last steps
         force_compute = (self.cnt == 1 or self.cnt == self.num_steps)
 
-        # Process transformer blocks with per-block heuristics
+        # === 新增：transformer_blocks 总循环计时 ===
+        _t_tb_loop_start = time.perf_counter()
+
         for index_block, block in enumerate(self.transformer_blocks):
-            # Initialize block state if not exists
+            # === 新增：单 block 起始时间（统计总 loop 用） ===
+            _t_block_start = time.perf_counter()
+            _t_heuristic_start = time.perf_counter()
+            _t_heuristic_start_part_1 = time.perf_counter()
+
             if index_block not in self.block_heuristic_states:
                 self.block_heuristic_states[index_block] = {
                     'accumulated_distance': 0,
@@ -110,40 +118,37 @@ def TeaBlockCacheForward(
                     'cached_encoder_output': None,
                     'should_compute': True
                 }
-            
+
             block_state = self.block_heuristic_states[index_block]
-            
-            # Determine if this block should be computed
             should_compute_block = force_compute
-            
+            _timings['transformer_blocks_heuristic_total_part1'] += time.perf_counter() - _t_heuristic_start_part_1
+            _t_heuristic_start_part_2 = time.perf_counter()
+
+            # === 新增：heuristic 段计时 ===
+
             if not force_compute and is_within_time_range and index_block >= self.block_cache_start:
-                # Calculate modulated input (like TeaCache) for more accurate change detection
                 inp = hidden_states.clone()
                 temb_ = temb.clone()
                 norm_result = block.norm1(inp, emb=temb_)
-                # norm_result = inp
-                # Handle different return formats safely
+                _timings['transformer_blocks_heuristic_total_part2'] += time.perf_counter() - _t_heuristic_start_part_2
+                _t_heuristic_start_part_3 = time.perf_counter()
+
                 if isinstance(norm_result, tuple) and len(norm_result) >= 5:
-                    modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
+                    modulated_inp = norm_result[0]
                 elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
                     modulated_inp = norm_result[0]
                 else:
                     modulated_inp = norm_result
-                
-                # Apply heuristic for this specific block using modulated input
+
                 if block_state['previous_modulated_input'] is not None:
-                    # Calculate change in modulated input for this block
                     rel_change = (
-                        (modulated_inp - block_state['previous_modulated_input']).abs().mean() 
+                        (modulated_inp - block_state['previous_modulated_input']).abs().mean()
                         / block_state['previous_modulated_input'].abs().mean()
                     ).cpu().item()
-                    
-                    # Apply rescaling function (same as TeaCache)
                     coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
                     rescale_func = np.poly1d(coefficients)
                     block_state['accumulated_distance'] += rescale_func(rel_change)
-                    
-                    # Check if accumulated change exceeds threshold
+
                     if block_state['accumulated_distance'] < self.block_rel_l1_thresh:
                         should_compute_block = False
                     else:
@@ -151,28 +156,27 @@ def TeaBlockCacheForward(
                         should_compute_block = True
                 else:
                     should_compute_block = True
-                
-                # Update previous modulated input
+
                 block_state['previous_modulated_input'] = modulated_inp.clone()
+                _timings['transformer_blocks_heuristic_total_part3'] += time.perf_counter() - _t_heuristic_start_part_3
             else:
                 should_compute_block = True
                 if is_within_time_range and index_block >= self.block_cache_start:
-                    # Still compute modulated input for future comparisons
                     inp = hidden_states.clone()
                     temb_ = temb.clone()
                     norm_result = block.norm1(inp, emb=temb_)
-                    # norm_result = inp
-                    # Handle different return formats safely
                     if isinstance(norm_result, tuple) and len(norm_result) >= 5:
-                        modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
+                        modulated_inp = norm_result[0]
                     elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
                         modulated_inp = norm_result[0]
                     else:
                         modulated_inp = norm_result
                     block_state['previous_modulated_input'] = modulated_inp.clone()
 
+            # === 新增：累计 heuristic 耗时 ===
+            _timings['transformer_blocks_heuristic_total'] += time.perf_counter() - _t_heuristic_start
+
             if should_compute_block:
-                # Compute the block
                 if self.training and self.gradient_checkpointing:
                     def create_custom_forward(module, return_dict=None):
                         def custom_forward(*inputs):
@@ -199,13 +203,11 @@ def TeaBlockCacheForward(
                         image_rotary_emb=image_rotary_emb,
                         joint_attention_kwargs=joint_attention_kwargs,
                     )
-                
-                # Cache the outputs
+
                 if is_within_time_range and index_block >= self.block_cache_start:
                     block_state['cached_output'] = hidden_states.clone()
                     block_state['cached_encoder_output'] = encoder_hidden_states.clone()
-                
-                # controlnet residual
+
                 if controlnet_block_samples is not None:
                     interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
                     interval_control = int(np.ceil(interval_control))
@@ -216,18 +218,25 @@ def TeaBlockCacheForward(
                     else:
                         hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
             else:
-                # Use cached outputs
-                if (block_state['cached_output'] is not None and 
+                if (block_state['cached_output'] is not None and
                     block_state['cached_encoder_output'] is not None):
                     hidden_states = block_state['cached_output']
                     encoder_hidden_states = block_state['cached_encoder_output']
 
-        # Concatenate encoder and image hidden states
+            # === 新增：累计 transformer_blocks loop 耗时（单 block 加到总计） ===
+            # 注意这里只记录总循环时间，在循环结束后统一计算
+
+        _timings['transformer_blocks_loop_total'] = time.perf_counter() - _t_tb_loop_start
+
         hidden_states = paddle.concat([encoder_hidden_states, hidden_states], axis=1)
 
-        # Process single transformer blocks with per-block heuristics
+        # === 新增：single_transformer_blocks 总循环计时 ===
+        _t_stb_loop_start = time.perf_counter()
+
         for index_block, block in enumerate(self.single_transformer_blocks):
-            # Initialize block state if not exists
+            _t_block_start = time.perf_counter()
+
+            _t_heuristic_start = time.perf_counter()
             if index_block not in self.single_block_heuristic_states:
                 self.single_block_heuristic_states[index_block] = {
                     'accumulated_distance': 0,
@@ -235,39 +244,32 @@ def TeaBlockCacheForward(
                     'cached_output': None,
                     'should_compute': True
                 }
-            
+
             block_state = self.single_block_heuristic_states[index_block]
-            
-            # Determine if this block should be computed
             should_compute_block = force_compute
+
             
+
             if not force_compute and is_within_time_range and index_block >= self.single_block_cache_start:
-                # Calculate modulated input for single blocks (they have norm layer too)
                 inp = hidden_states.clone()
                 temb_ = temb.clone()
                 norm_result = block.norm(inp, emb=temb_)
-                # Handle different return formats safely
                 if isinstance(norm_result, tuple) and len(norm_result) >= 5:
-                    modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
+                    modulated_inp = norm_result[0]
                 elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
                     modulated_inp = norm_result[0]
                 else:
                     modulated_inp = norm_result
-                
-                # Apply heuristic for this specific block using modulated input
+
                 if block_state['previous_modulated_input'] is not None:
-                    # Calculate change in modulated input for this block
                     rel_change = (
-                        (modulated_inp - block_state['previous_modulated_input']).abs().mean() 
+                        (modulated_inp - block_state['previous_modulated_input']).abs().mean()
                         / block_state['previous_modulated_input'].abs().mean()
                     ).cpu().item()
-                    
-                    # Apply rescaling function
                     coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
                     rescale_func = np.poly1d(coefficients)
                     block_state['accumulated_distance'] += rescale_func(rel_change)
-                    
-                    # Check if accumulated change exceeds threshold
+
                     if block_state['accumulated_distance'] < self.single_block_rel_l1_thresh:
                         should_compute_block = False
                     else:
@@ -275,27 +277,26 @@ def TeaBlockCacheForward(
                         should_compute_block = True
                 else:
                     should_compute_block = True
-                
-                # Update previous modulated input
+
                 block_state['previous_modulated_input'] = modulated_inp.clone()
             else:
                 should_compute_block = True
                 if is_within_time_range and index_block >= self.single_block_cache_start:
-                    # Still compute modulated input for future comparisons
                     inp = hidden_states.clone()
                     temb_ = temb.clone()
                     norm_result = block.norm(inp, emb=temb_)
-                    # Handle different return formats safely
                     if isinstance(norm_result, tuple) and len(norm_result) >= 5:
-                        modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
+                        modulated_inp = norm_result[0]
                     elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
                         modulated_inp = norm_result[0]
                     else:
                         modulated_inp = norm_result
                     block_state['previous_modulated_input'] = modulated_inp.clone()
 
+            # === 新增：累计 heuristic 耗时 ===
+            _timings['single_blocks_heuristic_total'] += time.perf_counter() - _t_heuristic_start
+
             if should_compute_block:
-                # Compute the block
                 if self.training and self.gradient_checkpointing:
                     def create_custom_forward(module, return_dict=None):
                         def custom_forward(*inputs):
@@ -320,28 +321,25 @@ def TeaBlockCacheForward(
                         image_rotary_emb=image_rotary_emb,
                         joint_attention_kwargs=joint_attention_kwargs,
                     )
-                
-                # Cache the output
+
                 if is_within_time_range and index_block >= self.single_block_cache_start:
                     block_state['cached_output'] = hidden_states.clone()
-                
-                # controlnet residual
+
                 if controlnet_single_block_samples is not None:
                     interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
                     interval_control = int(np.ceil(interval_control))
-                    hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
-                        hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+                    hidden_states[:, encoder_hidden_states.shape[1]:, ...] = (
+                        hidden_states[:, encoder_hidden_states.shape[1]:, ...]
                         + controlnet_single_block_samples[index_block // interval_control]
                     )
             else:
-                # Use cached output
                 if block_state['cached_output'] is not None:
                     hidden_states = block_state['cached_output']
 
-        # Extract only the image hidden states
-        hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+        _timings['single_blocks_loop_total'] = time.perf_counter() - _t_stb_loop_start
 
-        # Reset counter if we've reached the end
+        hidden_states = hidden_states[:, encoder_hidden_states.shape[1]:, ...]
+
         if self.cnt == self.num_steps:
             self.cnt = 0
 
@@ -349,10 +347,21 @@ def TeaBlockCacheForward(
         output = self.proj_out(hidden_states)
 
         if USE_PEFT_BACKEND:
-            # remove `lora_scale` from each PEFT layer
             unscale_lora_layers(self, lora_scale)
+
+        # === 新增：总 heuristic & 总 forward ===
+        _timings['heuristic_total'] = (
+            _timings['transformer_blocks_heuristic_total'] +
+            _timings['single_blocks_heuristic_total']
+        )
+        _timings['total_forward'] = time.perf_counter() - _t_forward_start
+
+        # === 新增：打印统计结果 ===
+        print("[TeaBlockCacheForward Timings]")
+        for k, v in _timings.items():
+            print(f"  {k}: {v:.6f}s")
 
         if not return_dict:
             return (output,)
 
-        return Transformer2DModelOutput(sample=output) 
+        return Transformer2DModelOutput(sample=output)
