@@ -132,6 +132,38 @@ def update_block_taylor_cache(block_cache: Dict, current_step: int, hidden_outpu
             block_cache['cache']['encoder'] = encoder_cache_dict['cache']['hidden']
 
 
+def simple_linear_extrapolation(history: list, steps_ahead: int = 1) -> paddle.Tensor:
+    """
+    简单的线性外推预测
+    基于最近的两个历史值进行线性外推
+    """
+    if len(history) < 2:
+        return history[-1] if history else None
+    
+    # 使用最近的两个值计算趋势
+    current = history[-1]
+    previous = history[-2]
+    
+    # 计算变化趋势
+    delta = current - previous
+    
+    # 线性外推
+    predicted = current + delta * steps_ahead
+    
+    # 数值稳定性检查
+    if not paddle.isfinite(predicted).all():
+        return current
+    
+    # 限制变化幅度，避免预测值偏差过大
+    max_change = paddle.linalg.norm(current) * 0.1  # 限制变化在10%以内
+    delta_norm = paddle.linalg.norm(delta)
+    if delta_norm > max_change:
+        delta = delta * (max_change / delta_norm)
+        predicted = current + delta * steps_ahead
+    
+    return predicted
+
+
 def TeaBlockCacheTaylorForward(
         self,
         hidden_states: paddle.Tensor,
@@ -148,13 +180,11 @@ def TeaBlockCacheTaylorForward(
         controlnet_blocks_repeat: bool = False,
     ) -> Union[paddle.Tensor, Transformer2DModelOutput]:
         """
-        A hybrid caching strategy that combines TeaBlockCache per-block heuristics 
-        with Taylor expansion cache reuse mechanism - CORRECTED VERSION.
+        TeaBlockCache with simple Taylor (linear extrapolation) enhancement.
         
-        This method integrates:
-        1. Per-block heuristic caching from TeaBlockCache
-        2. Per-block Taylor expansion prediction (NOT simple cache reuse)
-        3. Time and block dimension partitioning
+        This method extends TeaBlockCache with simple linear extrapolation
+        instead of direct cache reuse, providing better prediction accuracy
+        while maintaining numerical stability.
         """
         if not hasattr(self, "_poly_coeffs_tensor"):
             self._poly_coeffs_tensor = paddle.to_tensor(
@@ -162,17 +192,6 @@ def TeaBlockCacheTaylorForward(
                 -3.82021401e00, 2.64230861e-01],
                 dtype=hidden_states.dtype,
             )
-            
-        # Initialize Taylor cache system
-        if not hasattr(self, 'taylor_cache_system'):
-            self.taylor_cache_system = {
-                'max_order': 3,  # Maximum Taylor expansion order
-                'first_enhance': 2,  # First step to start using derivatives
-                'cache': {'hidden': {}},
-                'activated_steps': [],
-                'step_counter': 0
-            }
-            
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
             lora_scale = joint_attention_kwargs.pop("scale", 1.0)
@@ -236,71 +255,35 @@ def TeaBlockCacheTaylorForward(
         if timestep == 1000 or self.cnt == 0:
             self.block_heuristic_states = {}
             self.single_block_heuristic_states = {}
-            self.taylor_cache_system = {
-                'max_order': 3,
-                'first_enhance': 2,
-                'cache': {'hidden': {}},
-                'activated_steps': [],
-                'step_counter': 0
-            }
             self.cnt = 0
 
-        # Update Taylor cache system step counter
-        self.taylor_cache_system['step_counter'] = self.cnt
-        
         # Global step counter
         self.cnt += 1
         
         # Force computation at first and last steps
         force_compute = (self.cnt == 1 or self.cnt == self.num_steps)
 
-        # Taylor expansion for global hidden states prediction
-        use_taylor_prediction = False
-        if (len(self.taylor_cache_system['activated_steps']) >= 2 and 
-            not force_compute and is_within_time_range):
-            
-            current_info = {
-                'step': self.cnt,
-                'activated_steps': self.taylor_cache_system['activated_steps']
-            }
-            
-            # Try to use Taylor prediction for the entire hidden states
-            if len(self.taylor_cache_system['cache']['hidden']) > 0:
-                try:
-                    predicted_hidden_states = step_taylor_formula(self.taylor_cache_system, current_info)
-                    # Use predicted states if they have reasonable magnitude
-                    if paddle.isfinite(predicted_hidden_states).all():
-                        hidden_states = predicted_hidden_states
-                        use_taylor_prediction = True
-                except:
-                    use_taylor_prediction = False
-
-        # Process transformer blocks with per-block Taylor prediction
+        # Process transformer blocks with per-block heuristics + simple Taylor
         for index_block, block in enumerate(self.transformer_blocks):
             # Initialize block state if not exists
             if index_block not in self.block_heuristic_states:
                 self.block_heuristic_states[index_block] = {
                     'accumulated_distance': 0,
                     'previous_modulated_input': None,
-                    'cached_output': None,
-                    'cached_encoder_output': None,
                     'should_compute': True,
-                    # ✅ Per-block Taylor cache system
-                    'taylor_cache': {
-                        'cache': {'hidden': {}, 'encoder': {}}, 
-                        'activated_steps': [],
-                        'max_order': 3,
-                        'first_enhance': 2  # ✅ 添加缺失的 first_enhance 字段
-                    }
+                    # Simple history for linear extrapolation
+                    'hidden_history': [],
+                    'encoder_history': [],
+                    'max_history': 3  # Keep only recent history for stability
                 }
             
             block_state = self.block_heuristic_states[index_block]
             
             # Determine if this block should be computed
-            should_compute_block = force_compute or use_taylor_prediction
+            should_compute_block = force_compute
             
             if not force_compute and is_within_time_range and index_block >= self.block_cache_start:
-                # Calculate modulated input for more accurate change detection
+                # Calculate modulated input (like TeaCache) for more accurate change detection
                 inp = hidden_states
                 temb_ = temb
                 norm_result = block.norm1(inp, emb=temb_)
@@ -314,7 +297,7 @@ def TeaBlockCacheTaylorForward(
                     modulated_inp = norm_result
                 
                 # Apply heuristic for this specific block using modulated input
-                if block_state['previous_modulated_input'] is not None and not use_taylor_prediction:
+                if block_state['previous_modulated_input'] is not None:
                     hidden_dim = modulated_inp.shape[-1]
                     C = max(1, hidden_dim // 8) 
                     mod_head = modulated_inp[:, :, :C]
@@ -382,17 +365,16 @@ def TeaBlockCacheTaylorForward(
                         joint_attention_kwargs=joint_attention_kwargs,
                     )
                 
-                # ✅ Update per-block Taylor cache with actual computed results
+                # Update history for linear extrapolation
                 if is_within_time_range and index_block >= self.block_cache_start:
-                    update_block_taylor_cache(
-                        block_state['taylor_cache'],
-                        self.cnt,
-                        hidden_states.clone(),
-                        encoder_hidden_states.clone()
-                    )
-                    # Also keep simple cache as fallback
-                    block_state['cached_output'] = hidden_states.clone()
-                    block_state['cached_encoder_output'] = encoder_hidden_states.clone()
+                    # Add to history
+                    block_state['hidden_history'].append(hidden_states.clone())
+                    block_state['encoder_history'].append(encoder_hidden_states.clone())
+                    
+                    # Maintain history size
+                    if len(block_state['hidden_history']) > block_state['max_history']:
+                        block_state['hidden_history'].pop(0)
+                        block_state['encoder_history'].pop(0)
                 
                 # controlnet residual
                 if controlnet_block_samples is not None:
@@ -405,23 +387,15 @@ def TeaBlockCacheTaylorForward(
                     else:
                         hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
             else:
-                # ✅ Use per-block Taylor prediction instead of simple cache reuse
-                predicted_hidden, predicted_encoder = block_taylor_predict(
-                    block_state['taylor_cache'], 
-                    self.cnt
-                )
+                # Use linear extrapolation instead of direct cache reuse
+                predicted_hidden = simple_linear_extrapolation(block_state['hidden_history'])
+                predicted_encoder = simple_linear_extrapolation(block_state['encoder_history'])
                 
                 if predicted_hidden is not None and predicted_encoder is not None:
-                    # Use Taylor prediction
                     hidden_states = predicted_hidden
                     encoder_hidden_states = predicted_encoder
-                elif (block_state['cached_output'] is not None and 
-                      block_state['cached_encoder_output'] is not None):
-                    # Fallback to simple cache if Taylor prediction fails
-                    hidden_states = block_state['cached_output']
-                    encoder_hidden_states = block_state['cached_encoder_output']
                 else:
-                    # Force computation if no cache available
+                    # Fallback: force computation if no history available
                     encoder_hidden_states, hidden_states = block(
                         hidden_states=hidden_states,
                         encoder_hidden_states=encoder_hidden_states,
@@ -430,42 +404,26 @@ def TeaBlockCacheTaylorForward(
                         joint_attention_kwargs=joint_attention_kwargs,
                     )
 
-        # Update global Taylor expansion cache after processing transformer blocks
-        if not use_taylor_prediction and is_within_time_range:
-            self.taylor_cache_system['activated_steps'].append(self.cnt)
-            current_info = {
-                'step': self.cnt,
-                'activated_steps': self.taylor_cache_system['activated_steps']
-            }
-            
-            if len(self.taylor_cache_system['activated_steps']) >= 2:
-                step_derivative_approximation(self.taylor_cache_system, current_info, hidden_states.clone())
-
         # Concatenate encoder and image hidden states
         hidden_states = paddle.concat([encoder_hidden_states, hidden_states], axis=1)
 
-        # Process single transformer blocks with per-block Taylor prediction
+        # Process single transformer blocks with per-block heuristics + simple Taylor
         for index_block, block in enumerate(self.single_transformer_blocks):
             # Initialize block state if not exists
             if index_block not in self.single_block_heuristic_states:
                 self.single_block_heuristic_states[index_block] = {
                     'accumulated_distance': 0,
                     'previous_modulated_input': None,
-                    'cached_output': None,
                     'should_compute': True,
-                    # ✅ Per-block Taylor cache for single blocks too
-                    'taylor_cache': {
-                        'cache': {'hidden': {}}, 
-                        'activated_steps': [],
-                        'max_order': 3,
-                        'first_enhance': 2  # ✅ 添加缺失的 first_enhance 字段
-                    }
+                    # Simple history for linear extrapolation
+                    'hidden_history': [],
+                    'max_history': 3  # Keep only recent history for stability
                 }
             
             block_state = self.single_block_heuristic_states[index_block]
             
             # Determine if this block should be computed
-            should_compute_block = force_compute or use_taylor_prediction
+            should_compute_block = force_compute
             
             if not force_compute and is_within_time_range and index_block >= self.single_block_cache_start:
                 # Calculate modulated input for single blocks
@@ -481,7 +439,7 @@ def TeaBlockCacheTaylorForward(
                     modulated_inp = norm_result
                 
                 # Apply heuristic for this specific block using modulated input
-                if block_state['previous_modulated_input'] is not None and not use_taylor_prediction:
+                if block_state['previous_modulated_input'] is not None:
                     hidden_dim = modulated_inp.shape[-1]
                     C = max(1, hidden_dim // 8) 
                     mod_head = modulated_inp[:, :, :C]
@@ -549,29 +507,14 @@ def TeaBlockCacheTaylorForward(
                         joint_attention_kwargs=joint_attention_kwargs,
                     )
                 
-                # ✅ Update per-block Taylor cache for single blocks
+                # Update history for linear extrapolation
                 if is_within_time_range and index_block >= self.single_block_cache_start:
-                    # For single blocks, we only have hidden states output
-                    single_cache_dict = {
-                        'cache': {'hidden': block_state['taylor_cache']['cache']['hidden']},
-                        'activated_steps': block_state['taylor_cache']['activated_steps'],
-                        'max_order': 3,
-                        'first_enhance': 2  # ✅ 添加缺失的 first_enhance 字段
-                    }
+                    # Add to history
+                    block_state['hidden_history'].append(hidden_states.clone())
                     
-                    single_cache_dict['activated_steps'].append(self.cnt)
-                    
-                    if len(single_cache_dict['activated_steps']) >= 2:
-                        current_info = {
-                            'step': self.cnt,
-                            'activated_steps': single_cache_dict['activated_steps']
-                        }
-                        step_derivative_approximation(single_cache_dict, current_info, hidden_states.clone())
-                        block_state['taylor_cache']['cache']['hidden'] = single_cache_dict['cache']['hidden']
-                        block_state['taylor_cache']['activated_steps'] = single_cache_dict['activated_steps']
-                    
-                    # Also keep simple cache as fallback
-                    block_state['cached_output'] = hidden_states.clone()
+                    # Maintain history size
+                    if len(block_state['hidden_history']) > block_state['max_history']:
+                        block_state['hidden_history'].pop(0)
                 
                 # controlnet residual
                 if controlnet_single_block_samples is not None:
@@ -582,46 +525,19 @@ def TeaBlockCacheTaylorForward(
                         + controlnet_single_block_samples[index_block // interval_control]
                     )
             else:
-                # ✅ Use per-block Taylor prediction for single blocks
-                if len(block_state['taylor_cache']['activated_steps']) >= 2:
-                    current_info = {
-                        'step': self.cnt,
-                        'activated_steps': block_state['taylor_cache']['activated_steps']
-                    }
-                    
-                    try:
-                        predicted_hidden = step_taylor_formula(
-                            {'cache': {'hidden': block_state['taylor_cache']['cache']['hidden']}}, 
-                            current_info
-                        )
-                        
-                        if paddle.isfinite(predicted_hidden).all():
-                            hidden_states = predicted_hidden
-                        elif block_state['cached_output'] is not None:
-                            # Fallback to simple cache
-                            hidden_states = block_state['cached_output']
-                        else:
-                            # Force computation
-                            hidden_states = block(
-                                hidden_states=hidden_states,
-                                temb=temb,
-                                image_rotary_emb=image_rotary_emb,
-                                joint_attention_kwargs=joint_attention_kwargs,
-                            )
-                    except:
-                        # Fallback strategies
-                        if block_state['cached_output'] is not None:
-                            hidden_states = block_state['cached_output']
-                        else:
-                            hidden_states = block(
-                                hidden_states=hidden_states,
-                                temb=temb,
-                                image_rotary_emb=image_rotary_emb,
-                                joint_attention_kwargs=joint_attention_kwargs,
-                            )
-                elif block_state['cached_output'] is not None:
-                    # Use simple cache if Taylor not ready
-                    hidden_states = block_state['cached_output']
+                # Use linear extrapolation instead of direct cache reuse
+                predicted_hidden = simple_linear_extrapolation(block_state['hidden_history'])
+                
+                if predicted_hidden is not None:
+                    hidden_states = predicted_hidden
+                else:
+                    # Fallback: force computation if no history available
+                    hidden_states = block(
+                        hidden_states=hidden_states,
+                        temb=temb,
+                        image_rotary_emb=image_rotary_emb,
+                        joint_attention_kwargs=joint_attention_kwargs,
+                    )
 
         # Extract only the image hidden states
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
