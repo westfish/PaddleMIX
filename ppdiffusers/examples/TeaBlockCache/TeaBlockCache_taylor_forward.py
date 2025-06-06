@@ -74,7 +74,7 @@ def fallback_step_derivative_approximation(cache_dic: Dict, current: Dict, featu
     """
     Fallback implementation of step_derivative_approximation
     """
-    if len(current['activated_steps']) < 2:
+    if len(current['activated_steps']) < 1:
         cache_dic['cache']['hidden'][0] = feature
         return
     
@@ -199,18 +199,18 @@ def TeaBlockCacheTaylorForward(
         TeaBlockCache enhanced with Taylor expansion prediction.
         
         Combines per-block heuristic caching from TeaBlockCache with 
-        Taylor expansion prediction from TeaCache methodology.
+        global Taylor expansion prediction from TeaCache methodology.
         """
-        if not hasattr(self, "_poly_coeffs_tensor"):
-            self._poly_coeffs_tensor = paddle.to_tensor(
-                [4.98651651e02, -2.83781631e02, 5.58554382e01,
-                -3.82021401e00, 2.64230861e-01],
-                dtype=hidden_states.dtype,
-            )
-
-        # Initialize joint_attention_kwargs if needed
+        # Initialize joint_attention_kwargs and global Taylor cache
         if joint_attention_kwargs is None:
             joint_attention_kwargs = {}
+            
+        # Initialize global Taylor cache (like TeaCache)
+        if joint_attention_kwargs.get("cache_dic", None) is None:
+            if CACHE_FUNCTIONS_AVAILABLE:
+                joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = cache_init_step(self)
+            else:
+                joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = fallback_cache_init_step(self)
 
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -262,23 +262,20 @@ def TeaBlockCacheTaylorForward(
             ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
             joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
 
-        # Initialize per-block Taylor cache systems
-        if not hasattr(self, 'block_taylor_states'):
-            self.block_taylor_states = {}
-            self.single_block_taylor_states = {}
-            
-        # Initialize per-block heuristic states (from TeaBlockCache)
+        # Initialize per-block heuristic states for TeaBlockCache
         if not hasattr(self, 'block_heuristic_states'):
             self.block_heuristic_states = {}
             self.single_block_heuristic_states = {}
             
+        # Get global Taylor cache references
+        cache_dic = joint_attention_kwargs['cache_dic']
+        current = joint_attention_kwargs['current']
+        
         # Check if we're in cache-enabled time range
         is_within_time_range = self.step_start <= timestep <= self.step_end
         
         # Reset states at the beginning of generation
         if timestep == 1000 or self.cnt == 0:
-            self.block_taylor_states = {}
-            self.single_block_taylor_states = {}
             self.block_heuristic_states = {}
             self.single_block_heuristic_states = {}
             self.cnt = 0
@@ -289,136 +286,177 @@ def TeaBlockCacheTaylorForward(
         # Force computation at first and last steps
         force_compute = (self.cnt == 1 or self.cnt == self.num_steps)
 
-        # Process transformer blocks with per-block Taylor caching
-        for index_block, block in enumerate(self.transformer_blocks):
-            # Initialize block Taylor cache
-            if index_block not in self.block_taylor_states:
-                if CACHE_FUNCTIONS_AVAILABLE:
-                    cache_dic, current = cache_init_step(self)
-                else:
-                    cache_dic, current = fallback_cache_init_step(self)
-                
-                self.block_taylor_states[index_block] = {
-                    'cache_dic': cache_dic,
-                    'current': current
-                }
-            
-            # Initialize block heuristic state
-            if index_block not in self.block_heuristic_states:
-                self.block_heuristic_states[index_block] = {
-                    'accumulated_distance': 0,
-                    'previous_modulated_input': None,
-                    'should_compute': True
-                }
-            
-            block_taylor_state = self.block_taylor_states[index_block]
-            block_heuristic_state = self.block_heuristic_states[index_block]
-            
-            # Update step counter for this block
-            block_taylor_state['current']['step'] = self.cnt
-            
-            # Determine if this block should be computed (TeaBlockCache heuristic)
-            should_compute_block = force_compute
-            
-            if not force_compute and is_within_time_range and index_block >= self.block_cache_start:
-                # Calculate modulated input for change detection
-                inp = hidden_states
-                temb_ = temb
-                norm_result = block.norm1(inp, emb=temb_)
-                
-                if isinstance(norm_result, tuple) and len(norm_result) >= 5:
-                    modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
-                elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
-                    modulated_inp = norm_result[0]
-                else:
-                    modulated_inp = norm_result
-                
-                # Apply heuristic using polynomial rescale (from TeaCache)
-                if block_heuristic_state['previous_modulated_input'] is not None:
-                    hidden_dim = modulated_inp.shape[-1]
-                    C = max(1, hidden_dim // 8) 
-                    mod_head = modulated_inp[:, :, :C]
-                    prev_head = block_heuristic_state['previous_modulated_input'][:, :, :C]
-                    
-                    rel_change = (
-                        (mod_head - prev_head).abs().mean() / prev_head.abs().mean()
-                    ).cpu().item()
-                    
-                    # Apply polynomial rescale
-                    coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
-                    rescale_func = np.poly1d(coefficients)
-                    block_heuristic_state['accumulated_distance'] += rescale_func(rel_change)
-
-                    if block_heuristic_state['accumulated_distance'] < self.block_rel_l1_thresh:
-                        should_compute_block = False
-                    else:
-                        block_heuristic_state['accumulated_distance'] = 0
-                        should_compute_block = True
-                else:
-                    should_compute_block = True
-                
-                block_heuristic_state['previous_modulated_input'] = modulated_inp.clone()
-            else:
-                should_compute_block = True
-                if is_within_time_range and index_block >= self.block_cache_start:
-                    inp = hidden_states
-                    temb_ = temb
-                    norm_result = block.norm1(inp, emb=temb_)
-                    
+        # ===== TeaBlockCache per-block processing with global Taylor prediction =====
+        
+        # Check if we can use global Taylor prediction (similar to TeaCache logic)
+        use_global_taylor_prediction = False
+        if is_within_time_range and not force_compute:
+            # Use the first transformer block for global heuristic (like TeaCache)
+            if len(self.transformer_blocks) > 0:
+                inp = hidden_states.clone()
+                temb_ = temb.clone()
+                try:
+                    norm_result = self.transformer_blocks[0].norm1(inp, emb=temb_)
                     if isinstance(norm_result, tuple) and len(norm_result) >= 5:
                         modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
                     elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
                         modulated_inp = norm_result[0]
                     else:
                         modulated_inp = norm_result
-                    block_heuristic_state['previous_modulated_input'] = modulated_inp.clone()
+                    
+                    # Global TeaCache-style heuristic
+                    if hasattr(self, 'previous_modulated_input') and self.previous_modulated_input is not None:
+                        rel_change = (
+                            (modulated_inp - self.previous_modulated_input).abs().mean()
+                            / self.previous_modulated_input.abs().mean()
+                        ).cpu().item()
+                        
+                        # Apply polynomial rescale (from TeaCache)
+                        coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
+                        rescale_func = np.poly1d(coefficients)
+                        
+                        if not hasattr(self, 'accumulated_rel_l1_distance'):
+                            self.accumulated_rel_l1_distance = 0
+                        
+                        self.accumulated_rel_l1_distance += rescale_func(rel_change)
+                        
+                        # Check if we can use Taylor prediction
+                        if self.accumulated_rel_l1_distance < getattr(self, 'rel_l1_thresh', 0.3):
+                            use_global_taylor_prediction = True
+                        else:
+                            self.accumulated_rel_l1_distance = 0
+                    
+                    self.previous_modulated_input = modulated_inp.clone()
+                except:
+                    # If anything fails in global heuristic, force computation
+                    use_global_taylor_prediction = False
 
-            if should_compute_block:
-                # Compute the block
-                ori_hidden_states = hidden_states.clone()
-                block_taylor_state['current']['activated_steps'].append(block_taylor_state['current']['step'])
+        # Apply global Taylor prediction if possible
+        if use_global_taylor_prediction:
+            if TAYLORSEER_UTILS_AVAILABLE:
+                predicted_hidden = step_taylor_formula(cache_dic=cache_dic, current=current)
+            else:
+                predicted_hidden = fallback_step_taylor_formula(cache_dic=cache_dic, current=current)
+            
+            if predicted_hidden is not None and paddle.isfinite(predicted_hidden).all():
+                # Use Taylor prediction, skip all computation
+                hidden_states = predicted_hidden
+                # Skip transformer blocks processing
+                skip_transformer_computation = True
+            else:
+                # Taylor prediction failed, force computation
+                skip_transformer_computation = False
+        else:
+            skip_transformer_computation = False
+
+        # Process transformer blocks
+        if not skip_transformer_computation:
+            # Store original hidden states for Taylor cache update
+            ori_hidden_states = hidden_states.clone()
+            current['activated_steps'].append(current['step'])
+            
+            for index_block, block in enumerate(self.transformer_blocks):
+                # Initialize per-block heuristic state
+                if index_block not in self.block_heuristic_states:
+                    self.block_heuristic_states[index_block] = {
+                        'accumulated_distance': 0,
+                        'previous_modulated_input': None,
+                        'should_compute': True
+                    }
                 
-                if self.training and self.gradient_checkpointing:
-                    def create_custom_forward(module, return_dict=None):
-                        def custom_forward(*inputs):
-                            if return_dict is not None:
-                                return module(*inputs, return_dict=return_dict)
+                block_heuristic_state = self.block_heuristic_states[index_block]
+                
+                # Determine if this block should be computed (TeaBlockCache heuristic)
+                should_compute_block = force_compute
+                
+                if not force_compute and is_within_time_range and index_block >= self.block_cache_start:
+                    # Calculate modulated input for change detection
+                    inp = hidden_states
+                    temb_ = temb
+                    try:
+                        norm_result = block.norm1(inp, emb=temb_)
+                        
+                        if isinstance(norm_result, tuple) and len(norm_result) >= 5:
+                            modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
+                        elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
+                            modulated_inp = norm_result[0]
+                        else:
+                            modulated_inp = norm_result
+                        
+                        # Apply per-block heuristic using polynomial rescale
+                        if block_heuristic_state['previous_modulated_input'] is not None:
+                            hidden_dim = modulated_inp.shape[-1]
+                            C = max(1, hidden_dim // 8) 
+                            mod_head = modulated_inp[:, :, :C]
+                            prev_head = block_heuristic_state['previous_modulated_input'][:, :, :C]
+                            
+                            rel_change = (
+                                (mod_head - prev_head).abs().mean() / prev_head.abs().mean()
+                            ).cpu().item()
+                            
+                            # Apply polynomial rescale
+                            coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
+                            rescale_func = np.poly1d(coefficients)
+                            block_heuristic_state['accumulated_distance'] += rescale_func(rel_change)
+
+                            if block_heuristic_state['accumulated_distance'] < self.block_rel_l1_thresh:
+                                should_compute_block = False
                             else:
-                                return module(*inputs)
-                        return custom_forward
-
-                    ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                    encoder_hidden_states, hidden_states = paddle.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        encoder_hidden_states,
-                        temb,
-                        image_rotary_emb,
-                        **ckpt_kwargs,
-                    )
+                                block_heuristic_state['accumulated_distance'] = 0
+                                should_compute_block = True
+                        else:
+                            should_compute_block = True
+                        
+                        block_heuristic_state['previous_modulated_input'] = modulated_inp.clone()
+                    except:
+                        should_compute_block = True
                 else:
-                    encoder_hidden_states, hidden_states = block(
-                        hidden_states=hidden_states,
-                        encoder_hidden_states=encoder_hidden_states,
-                        temb=temb,
-                        image_rotary_emb=image_rotary_emb,
-                        joint_attention_kwargs=joint_attention_kwargs,
-                    )
-                
-                # Update Taylor cache with computed result
-                if is_within_time_range and index_block >= self.block_cache_start:
-                    if TAYLORSEER_UTILS_AVAILABLE:
-                        step_derivative_approximation(
-                            cache_dic=block_taylor_state['cache_dic'], 
-                            current=block_taylor_state['current'], 
-                            feature=hidden_states
+                    should_compute_block = True
+
+                if should_compute_block:
+                    # Compute the block
+                    if self.training and self.gradient_checkpointing:
+                        def create_custom_forward(module, return_dict=None):
+                            def custom_forward(*inputs):
+                                if return_dict is not None:
+                                    return module(*inputs, return_dict=return_dict)
+                                else:
+                                    return module(*inputs)
+                            return custom_forward
+
+                        ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                        encoder_hidden_states, hidden_states = paddle.utils.checkpoint.checkpoint(
+                            create_custom_forward(block),
+                            hidden_states,
+                            encoder_hidden_states,
+                            temb,
+                            image_rotary_emb,
+                            **ckpt_kwargs,
                         )
                     else:
-                        fallback_step_derivative_approximation(
-                            cache_dic=block_taylor_state['cache_dic'], 
-                            current=block_taylor_state['current'], 
-                            feature=hidden_states
+                        encoder_hidden_states, hidden_states = block(
+                            hidden_states=hidden_states,
+                            encoder_hidden_states=encoder_hidden_states,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb,
+                            joint_attention_kwargs=joint_attention_kwargs,
                         )
+                else:
+                    # Use cached output (simple cache reuse for per-block)
+                    if hasattr(block_heuristic_state, 'cached_hidden') and hasattr(block_heuristic_state, 'cached_encoder'):
+                        hidden_states = block_heuristic_state['cached_hidden']
+                        encoder_hidden_states = block_heuristic_state['cached_encoder']
+                    else:
+                        # First time caching, compute and store
+                        encoder_hidden_states, hidden_states = block(
+                            hidden_states=hidden_states,
+                            encoder_hidden_states=encoder_hidden_states,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb,
+                            joint_attention_kwargs=joint_attention_kwargs,
+                        )
+                        block_heuristic_state['cached_hidden'] = hidden_states.clone()
+                        block_heuristic_state['cached_encoder'] = encoder_hidden_states.clone()
                 
                 # controlnet residual
                 if controlnet_block_samples is not None:
@@ -430,164 +468,107 @@ def TeaBlockCacheTaylorForward(
                         )
                     else:
                         hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
-            else:
-                # Use Taylor prediction instead of computation
-                if is_within_time_range and index_block >= self.block_cache_start:
-                    if TAYLORSEER_UTILS_AVAILABLE:
-                        predicted_hidden = step_taylor_formula(
-                            cache_dic=block_taylor_state['cache_dic'], 
-                            current=block_taylor_state['current']
+
+            # Concatenate encoder and image hidden states
+            hidden_states = paddle.concat([encoder_hidden_states, hidden_states], axis=1)
+
+            # Process single transformer blocks
+            for index_block, block in enumerate(self.single_transformer_blocks):
+                # Initialize per-single-block heuristic state
+                if index_block not in self.single_block_heuristic_states:
+                    self.single_block_heuristic_states[index_block] = {
+                        'accumulated_distance': 0,
+                        'previous_modulated_input': None,
+                        'should_compute': True
+                    }
+                
+                single_block_heuristic_state = self.single_block_heuristic_states[index_block]
+                
+                # Determine if this single block should be computed
+                should_compute_block = force_compute
+                
+                if not force_compute and is_within_time_range and index_block >= self.single_block_cache_start:
+                    # Calculate modulated input for single blocks
+                    inp = hidden_states
+                    temb_ = temb
+                    try:
+                        norm_result = block.norm(inp, emb=temb_)
+                        
+                        if isinstance(norm_result, tuple) and len(norm_result) >= 5:
+                            modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
+                        elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
+                            modulated_inp = norm_result[0]
+                        else:
+                            modulated_inp = norm_result
+                        
+                        if single_block_heuristic_state['previous_modulated_input'] is not None:
+                            hidden_dim = modulated_inp.shape[-1]
+                            C = max(1, hidden_dim // 8) 
+                            mod_head = modulated_inp[:, :, :C]
+                            prev_head = single_block_heuristic_state['previous_modulated_input'][:, :, :C]
+                            
+                            rel_change = (
+                                (mod_head - prev_head).abs().mean() / prev_head.abs().mean()
+                            ).cpu().item()
+                            
+                            # Apply polynomial rescale
+                            coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
+                            rescale_func = np.poly1d(coefficients)
+                            single_block_heuristic_state['accumulated_distance'] += rescale_func(rel_change)
+                            
+                            if single_block_heuristic_state['accumulated_distance'] < self.single_block_rel_l1_thresh:
+                                should_compute_block = False
+                            else:
+                                single_block_heuristic_state['accumulated_distance'] = 0
+                                should_compute_block = True
+                        else:
+                            should_compute_block = True
+                        
+                        single_block_heuristic_state['previous_modulated_input'] = modulated_inp.clone()
+                    except:
+                        should_compute_block = True
+                else:
+                    should_compute_block = True
+
+                if should_compute_block:
+                    # Compute the single block
+                    if self.training and self.gradient_checkpointing:
+                        def create_custom_forward(module, return_dict=None):
+                            def custom_forward(*inputs):
+                                if return_dict is not None:
+                                    return module(*inputs, return_dict=return_dict)
+                                else:
+                                    return module(*inputs)
+                            return custom_forward
+
+                        ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                        hidden_states = paddle.utils.checkpoint.checkpoint(
+                            create_custom_forward(block),
+                            hidden_states,
+                            temb,
+                            image_rotary_emb,
+                            **ckpt_kwargs,
                         )
                     else:
-                        predicted_hidden = fallback_step_taylor_formula(
-                            cache_dic=block_taylor_state['cache_dic'], 
-                            current=block_taylor_state['current']
-                        )
-                    
-                    if predicted_hidden is not None and paddle.isfinite(predicted_hidden).all():
-                        hidden_states = predicted_hidden
-                        # For encoder states, we need to apply the same prediction logic
-                        # but since the original logic doesn't predict encoder states separately,
-                        # we'll keep encoder_hidden_states as is for now
-                    else:
-                        # Fallback: force computation
-                        encoder_hidden_states, hidden_states = block(
+                        hidden_states = block(
                             hidden_states=hidden_states,
-                            encoder_hidden_states=encoder_hidden_states,
                             temb=temb,
                             image_rotary_emb=image_rotary_emb,
                             joint_attention_kwargs=joint_attention_kwargs,
                         )
-
-        # Concatenate encoder and image hidden states
-        hidden_states = paddle.concat([encoder_hidden_states, hidden_states], axis=1)
-
-        # Process single transformer blocks with per-block Taylor caching
-        for index_block, block in enumerate(self.single_transformer_blocks):
-            # Initialize single block Taylor cache
-            if index_block not in self.single_block_taylor_states:
-                if CACHE_FUNCTIONS_AVAILABLE:
-                    cache_dic, current = cache_init_step(self)
                 else:
-                    cache_dic, current = fallback_cache_init_step(self)
-                
-                self.single_block_taylor_states[index_block] = {
-                    'cache_dic': cache_dic,
-                    'current': current
-                }
-            
-            # Initialize single block heuristic state
-            if index_block not in self.single_block_heuristic_states:
-                self.single_block_heuristic_states[index_block] = {
-                    'accumulated_distance': 0,
-                    'previous_modulated_input': None,
-                    'should_compute': True
-                }
-            
-            single_block_taylor_state = self.single_block_taylor_states[index_block]
-            single_block_heuristic_state = self.single_block_heuristic_states[index_block]
-            
-            # Update step counter for this single block
-            single_block_taylor_state['current']['step'] = self.cnt
-            
-            # Determine if this single block should be computed
-            should_compute_block = force_compute
-            
-            if not force_compute and is_within_time_range and index_block >= self.single_block_cache_start:
-                # Calculate modulated input for single blocks
-                inp = hidden_states
-                temb_ = temb
-                norm_result = block.norm(inp, emb=temb_)
-                
-                if isinstance(norm_result, tuple) and len(norm_result) >= 5:
-                    modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
-                elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
-                    modulated_inp = norm_result[0]
-                else:
-                    modulated_inp = norm_result
-                
-                if single_block_heuristic_state['previous_modulated_input'] is not None:
-                    hidden_dim = modulated_inp.shape[-1]
-                    C = max(1, hidden_dim // 8) 
-                    mod_head = modulated_inp[:, :, :C]
-                    prev_head = single_block_heuristic_state['previous_modulated_input'][:, :, :C]
-                    
-                    rel_change = (
-                        (mod_head - prev_head).abs().mean() / prev_head.abs().mean()
-                    ).cpu().item()
-                    
-                    # Apply polynomial rescale
-                    coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
-                    rescale_func = np.poly1d(coefficients)
-                    single_block_heuristic_state['accumulated_distance'] += rescale_func(rel_change)
-                    
-                    if single_block_heuristic_state['accumulated_distance'] < self.single_block_rel_l1_thresh:
-                        should_compute_block = False
+                    # Use cached output for single blocks
+                    if hasattr(single_block_heuristic_state, 'cached_hidden'):
+                        hidden_states = single_block_heuristic_state['cached_hidden']
                     else:
-                        single_block_heuristic_state['accumulated_distance'] = 0
-                        should_compute_block = True
-                else:
-                    should_compute_block = True
-                
-                single_block_heuristic_state['previous_modulated_input'] = modulated_inp.clone()
-            else:
-                should_compute_block = True
-                if is_within_time_range and index_block >= self.single_block_cache_start:
-                    inp = hidden_states
-                    temb_ = temb
-                    norm_result = block.norm(inp, emb=temb_)
-                    
-                    if isinstance(norm_result, tuple) and len(norm_result) >= 5:
-                        modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = norm_result
-                    elif isinstance(norm_result, tuple) and len(norm_result) >= 1:
-                        modulated_inp = norm_result[0]
-                    else:
-                        modulated_inp = norm_result
-                    single_block_heuristic_state['previous_modulated_input'] = modulated_inp.clone()
-
-            if should_compute_block:
-                # Compute the single block
-                single_block_taylor_state['current']['activated_steps'].append(single_block_taylor_state['current']['step'])
-                
-                if self.training and self.gradient_checkpointing:
-                    def create_custom_forward(module, return_dict=None):
-                        def custom_forward(*inputs):
-                            if return_dict is not None:
-                                return module(*inputs, return_dict=return_dict)
-                            else:
-                                return module(*inputs)
-                        return custom_forward
-
-                    ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                    hidden_states = paddle.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        temb,
-                        image_rotary_emb,
-                        **ckpt_kwargs,
-                    )
-                else:
-                    hidden_states = block(
-                        hidden_states=hidden_states,
-                        temb=temb,
-                        image_rotary_emb=image_rotary_emb,
-                        joint_attention_kwargs=joint_attention_kwargs,
-                    )
-                
-                # Update Taylor cache for single block
-                if is_within_time_range and index_block >= self.single_block_cache_start:
-                    if TAYLORSEER_UTILS_AVAILABLE:
-                        step_derivative_approximation(
-                            cache_dic=single_block_taylor_state['cache_dic'], 
-                            current=single_block_taylor_state['current'], 
-                            feature=hidden_states
+                        # First time caching, compute and store
+                        hidden_states = block(
+                            hidden_states=hidden_states,
+                            temb=temb,
+                            image_rotary_emb=image_rotary_emb,
+                            joint_attention_kwargs=joint_attention_kwargs,
                         )
-                    else:
-                        fallback_step_derivative_approximation(
-                            cache_dic=single_block_taylor_state['cache_dic'], 
-                            current=single_block_taylor_state['current'], 
-                            feature=hidden_states
-                        )
+                        single_block_heuristic_state['cached_hidden'] = hidden_states.clone()
                 
                 # controlnet residual
                 if controlnet_single_block_samples is not None:
@@ -597,33 +578,15 @@ def TeaBlockCacheTaylorForward(
                         hidden_states[:, encoder_hidden_states.shape[1] :, ...]
                         + controlnet_single_block_samples[index_block // interval_control]
                     )
-            else:
-                # Use Taylor prediction for single block
-                if is_within_time_range and index_block >= self.single_block_cache_start:
-                    if TAYLORSEER_UTILS_AVAILABLE:
-                        predicted_hidden = step_taylor_formula(
-                            cache_dic=single_block_taylor_state['cache_dic'], 
-                            current=single_block_taylor_state['current']
-                        )
-                    else:
-                        predicted_hidden = fallback_step_taylor_formula(
-                            cache_dic=single_block_taylor_state['cache_dic'], 
-                            current=single_block_taylor_state['current']
-                        )
-                    
-                    if predicted_hidden is not None and paddle.isfinite(predicted_hidden).all():
-                        hidden_states = predicted_hidden
-                    else:
-                        # Fallback: force computation
-                        hidden_states = block(
-                            hidden_states=hidden_states,
-                            temb=temb,
-                            image_rotary_emb=image_rotary_emb,
-                            joint_attention_kwargs=joint_attention_kwargs,
-                        )
 
-        # Extract only the image hidden states
-        hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+            # Extract only the image hidden states
+            hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+            
+            # Update global Taylor cache (like TeaCache)
+            if TAYLORSEER_UTILS_AVAILABLE:
+                step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
+            else:
+                fallback_step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
 
         # Reset counter if we've reached the end
         if self.cnt == self.num_steps:
@@ -634,6 +597,9 @@ def TeaBlockCacheTaylorForward(
 
         if USE_PEFT_BACKEND:
             unscale_lora_layers(self, lora_scale)
+
+        # Update global step counter (like TeaCache)
+        joint_attention_kwargs['current']['step'] += 1
 
         if not return_dict:
             return (output,)
