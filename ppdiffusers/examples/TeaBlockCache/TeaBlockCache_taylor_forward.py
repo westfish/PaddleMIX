@@ -22,6 +22,14 @@ except ImportError:
     TAYLORSEER_UTILS_AVAILABLE = False
     print("Warning: taylorseer_utils not available, using fallback")
 
+# Safety switch: disable external modules if they cause issues
+# Set this to False to force use of fallback implementations
+USE_EXTERNAL_MODULES = True
+if not USE_EXTERNAL_MODULES:
+    CACHE_FUNCTIONS_AVAILABLE = False
+    TAYLORSEER_UTILS_AVAILABLE = False
+    print("External modules disabled for safety, using fallback implementations")
+
 
 def fallback_cache_init_step(model):
     """
@@ -340,8 +348,14 @@ def TeaBlockCacheTaylorForward(
 
         # Apply global Taylor prediction if possible
         if use_global_taylor_prediction and len(current['activated_steps']) >= 1:
-            if TAYLORSEER_UTILS_AVAILABLE:
-                predicted_hidden = step_taylor_formula(cache_dic=cache_dic, current=current)
+            predicted_hidden = None
+            # External taylorseer_utils may have different requirements, use fallback for safety
+            if TAYLORSEER_UTILS_AVAILABLE and len(current['activated_steps']) >= 2:
+                try:
+                    predicted_hidden = step_taylor_formula(cache_dic=cache_dic, current=current)
+                except (IndexError, KeyError) as e:
+                    print(f"External step_taylor_formula failed: {e}, using fallback")
+                    predicted_hidden = fallback_step_taylor_formula(cache_dic=cache_dic, current=current)
             else:
                 predicted_hidden = fallback_step_taylor_formula(cache_dic=cache_dic, current=current)
             
@@ -592,8 +606,14 @@ def TeaBlockCacheTaylorForward(
             # Update global Taylor cache (like TeaCache)
             # Only update Taylor cache if we have enough activated steps
             if len(current['activated_steps']) >= 1:
-                if TAYLORSEER_UTILS_AVAILABLE:
-                    step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
+                # External taylorseer_utils requires at least 2 activated_steps
+                # Use fallback for safer operation or when insufficient history
+                if TAYLORSEER_UTILS_AVAILABLE and len(current['activated_steps']) >= 2:
+                    try:
+                        step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
+                    except (IndexError, KeyError) as e:
+                        print(f"External step_derivative_approximation failed: {e}, using fallback")
+                        fallback_step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
                 else:
                     fallback_step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
 
