@@ -31,14 +31,14 @@ if not USE_EXTERNAL_MODULES:
     print("External modules disabled for safety, using fallback implementations")
 
 
-def fallback_cache_init_step(model):
+def fallback_cache_init_step(model, max_order=3, first_enhance=2):
     """
-    Fallback implementation of cache_init_step
+    Fallback implementation of cache_init_step with configurable parameters
     """
     cache_dic = {
         'cache': {'hidden': {}},
-        'max_order': 3,
-        'first_enhance': 2
+        'max_order': max_order,
+        'first_enhance': first_enhance
     }
     current = {
         'step': 0,
@@ -49,7 +49,7 @@ def fallback_cache_init_step(model):
 
 def fallback_step_taylor_formula(cache_dic: Dict, current: Dict) -> paddle.Tensor:
     """
-    Fallback implementation of step_taylor_formula
+    Fallback implementation of step_taylor_formula with configurable parameters
     """
     if len(current['activated_steps']) < 1:
         return None
@@ -60,6 +60,11 @@ def fallback_step_taylor_formula(cache_dic: Dict, current: Dict) -> paddle.Tenso
     if 0 not in cache_dic['cache']['hidden']:
         return None
     
+    # Check first_enhance threshold
+    first_enhance = cache_dic.get('first_enhance', 2)
+    if current['step'] < first_enhance:
+        return None
+    
     try:
         # If we only have one activated step, just return the cached value
         if len(current['activated_steps']) < 2:
@@ -68,8 +73,11 @@ def fallback_step_taylor_formula(cache_dic: Dict, current: Dict) -> paddle.Tenso
         x = current['step'] - current['activated_steps'][-1]
         output = cache_dic['cache']['hidden'][0]
         
-        # Add higher order terms if available
-        for i in range(1, len(cache_dic['cache']['hidden'])):
+        # Get configured max_order
+        max_order = cache_dic.get('max_order', 3)
+        
+        # Add higher order terms if available, up to max_order
+        for i in range(1, min(max_order, len(cache_dic['cache']['hidden']))):
             if i in cache_dic['cache']['hidden']:
                 term = cache_dic['cache']['hidden'][i] * (x ** i)
                 if i > 1:
@@ -102,7 +110,7 @@ def fallback_step_derivative_approximation(cache_dic: Dict, current: Dict, featu
         # Store current feature for next iteration
         cache_dic['previous_feature'] = feature.clone()
         
-        # Limit cache size for stability
+        # Limit cache size for stability using configured max_order
         max_order = cache_dic.get('max_order', 3)
         keys_to_remove = [k for k in cache_dic['cache']['hidden'].keys() if k >= max_order]
         for k in keys_to_remove:
@@ -222,10 +230,20 @@ def TeaBlockCacheTaylorForward(
             
         # Initialize global Taylor cache (like TeaCache)
         if joint_attention_kwargs.get("cache_dic", None) is None:
+            # Get Taylor parameters from taylor_cache_system if available
+            max_order = 3  # default
+            first_enhance = 2  # default
+            if hasattr(self, 'taylor_cache_system'):
+                max_order = self.taylor_cache_system.get('max_order', 3)
+                first_enhance = self.taylor_cache_system.get('first_enhance', 2)
+            
             if CACHE_FUNCTIONS_AVAILABLE:
                 joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = cache_init_step(self)
+                # Override parameters in case external function doesn't use them
+                joint_attention_kwargs['cache_dic']['max_order'] = max_order
+                joint_attention_kwargs['cache_dic']['first_enhance'] = first_enhance
             else:
-                joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = fallback_cache_init_step(self)
+                joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = fallback_cache_init_step(self, max_order, first_enhance)
 
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -347,7 +365,15 @@ def TeaBlockCacheTaylorForward(
                     use_global_taylor_prediction = False
 
         # Apply global Taylor prediction if possible
-        if use_global_taylor_prediction and len(current['activated_steps']) >= 1:
+        # Check if we have enough steps and are past first_enhance threshold
+        first_enhance = cache_dic.get('first_enhance', 2)
+        can_use_taylor = (
+            use_global_taylor_prediction and 
+            len(current['activated_steps']) >= 1 and 
+            current['step'] >= first_enhance
+        )
+        
+        if can_use_taylor:
             predicted_hidden = None
             # External taylorseer_utils may have different requirements, use fallback for safety
             if TAYLORSEER_UTILS_AVAILABLE and len(current['activated_steps']) >= 2:
