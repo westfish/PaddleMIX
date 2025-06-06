@@ -1,0 +1,35 @@
+/root/miniconda3/envs/zx/lib/python3.10/site-packages/_distutils_hack/__init__.py:30: UserWarning: Setuptools is replacing distutils. Support for replacing an already imported distutils is deprecated. In the future, this condition will fail. Register concerns at https://github.com/pypa/setuptools/issues/new?template=distutils-deprecation.yml
+  warnings.warn(
+W0605 14:37:42.082777  7789 gpu_resources.cc:119] Please NOTE: device: 0, GPU Compute Capability: 8.0, Driver API Version: 12.2, Runtime API Version: 12.3
+W0605 14:37:42.083664  7789 gpu_resources.cc:164] device: 0, cuDNN Version: 9.3.
+W0605 14:37:42.083679  7789 gpu_resources.cc:196] WARNING: device: 0. The installed Paddle is compiled with CUDA 12.6, but CUDA runtime version in your machine is 12.2, which may cause serious incompatible bug. Please recompile or reinstall Paddle with compatible CUDA version.
+Warning: TGate not available for comparison
+Warning: TeaCache not available for comparison
+Loading pipeline components...:   0%|          | 0/7 [00:00<?, ?it/s][32m[2025-06-05 14:37:42,231] [    INFO][0m - Loading configuration file /root/.cache/paddlenlp/ppdiffusers/black-forest-labs/FLUX.1-dev/text_encoder/config.json[0m
+[32m[2025-06-05 14:37:42,232] [    INFO][0m - Loading weights file from cache at /root/.cache/paddlenlp/ppdiffusers/black-forest-labs/FLUX.1-dev/text_encoder/model.safetensors[0m
+[32m[2025-06-05 14:37:42,355] [    INFO][0m - Loaded weights file from disk, setting weights to model.[0m
+[32m[2025-06-05 14:37:42,553] [    INFO][0m - All model checkpoint weights were used when initializing CLIPTextModel.
+[0m
+[32m[2025-06-05 14:37:42,554] [    INFO][0m - All the weights of CLIPTextModel were initialized from the model checkpoint at black-forest-labs/FLUX.1-dev.
+If your task is similar to the task the model of the checkpoint was trained on, you can already use CLIPTextModel for predictions without further training.[0m
+Loading pipeline components...:  29%|██▊       | 2/7 [00:00<00:00,  6.05it/s][32m[2025-06-05 14:37:42,560] [    INFO][0m - Loading configuration file /root/.cache/paddlenlp/ppdiffusers/black-forest-labs/FLUX.1-dev/text_encoder_2/config.json[0m
+[32m[2025-06-05 14:37:42,561] [    INFO][0m - Loading weights file from cache at /root/.cache/paddlenlp/ppdiffusers/black-forest-labs/FLUX.1-dev/text_encoder_2/model.safetensors[0m
+Loading pipeline components...:  29%|██▊       | 2/7 [00:01<00:03,  1.32it/s]
+Traceback (most recent call last):
+  File "/root/paddlejob/workspace/env_run/zx/PaddleMIX-westfish-teablockcache/ppdiffusers/examples/TeaBlockCache/teablock_generation.py", line 371, in <module>
+    main()
+  File "/root/paddlejob/workspace/env_run/zx/PaddleMIX-westfish-teablockcache/ppdiffusers/examples/TeaBlockCache/teablock_generation.py", line 208, in main
+    pipe = FluxPipeline.from_pretrained(
+  File "/root/paddlejob/workspace/env_run/zx/PaddleMIX-westfish-teablockcache/ppdiffusers/ppdiffusers/pipelines/pipeline_utils.py", line 1116, in from_pretrained
+    loaded_sub_model = load_sub_model(
+  File "/root/paddlejob/workspace/env_run/zx/PaddleMIX-westfish-teablockcache/ppdiffusers/ppdiffusers/pipelines/pipeline_utils.py", line 418, in load_sub_model
+    loaded_sub_model = load_method(cached_folder, **loading_kwargs)
+  File "/root/paddlejob/workspace/env_run/zx/PaddleMIX-westfish-teablockcache/ppdiffusers/ppdiffusers/transformers/model_utils.py", line 393, in from_pretrained
+    model = super().from_pretrained(
+  File "/root/miniconda3/envs/zx/lib/python3.10/site-packages/paddlenlp/transformers/model_utils.py", line 2293, in from_pretrained
+    state_dict = load_state_dict(resolved_archive_file)
+  File "/root/miniconda3/envs/zx/lib/python3.10/site-packages/paddlenlp/transformers/model_utils.py", line 355, in load_state_dict
+    weight = py_safe_slice_[:]
+  File "/root/miniconda3/envs/zx/lib/python3.10/site-packages/paddlenlp/utils/safetensors.py", line 235, in __getitem__
+    self.bufferfile.readinto(view)
+KeyboardInterrupt
