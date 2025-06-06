@@ -289,7 +289,8 @@ def TeaBlockCacheTaylorForward(
                     'taylor_cache': {
                         'cache': {'hidden': {}, 'encoder': {}}, 
                         'activated_steps': [],
-                        'max_order': 3
+                        'max_order': 3,
+                        'first_enhance': 2  # ✅ 添加缺失的 first_enhance 字段
                     }
                 }
             
@@ -456,7 +457,8 @@ def TeaBlockCacheTaylorForward(
                     'taylor_cache': {
                         'cache': {'hidden': {}}, 
                         'activated_steps': [],
-                        'max_order': 3
+                        'max_order': 3,
+                        'first_enhance': 2  # ✅ 添加缺失的 first_enhance 字段
                     }
                 }
             
@@ -553,7 +555,8 @@ def TeaBlockCacheTaylorForward(
                     single_cache_dict = {
                         'cache': {'hidden': block_state['taylor_cache']['cache']['hidden']},
                         'activated_steps': block_state['taylor_cache']['activated_steps'],
-                        'max_order': 3
+                        'max_order': 3,
+                        'first_enhance': 2  # ✅ 添加缺失的 first_enhance 字段
                     }
                     
                     single_cache_dict['activated_steps'].append(self.cnt)
