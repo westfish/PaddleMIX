@@ -322,25 +322,25 @@ from ppdiffusers.utils import load_image, export_to_video
 from ppdiffusers.models.transformer_flux import FluxTransformer2DModel
 
 
-seed = 42
-prompt = "An image of a squirrel in Picasso style"
-pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
+# seed = 42
+# prompt = "An image of a squirrel in Picasso style"
+# pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
         
-FluxTransformer2DModel.forward = TeaCacheForward
-pipe.transformer.enable_teacache = True
-pipe.transformer.cnt = 0
-pipe.transformer.num_steps = 28
-pipe.transformer.rel_l1_thresh = (
-    0.25  # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
-)
-pipe.transformer.accumulated_rel_l1_distance = 0
-pipe.transformer.previous_modulated_input = None
-pipe.transformer.previous_residual = None
-for i in range(2):
-    # pipe.to("cuda")
-    img = pipe(
-        prompt, 
-        num_inference_steps=50,
-        generator=paddle.Generator().manual_seed(seed)
-        ).images[0]
-    img.save("{}.png".format('Teacache_Flux'))
+# FluxTransformer2DModel.forward = TeaCacheForward
+# pipe.transformer.enable_teacache = True
+# pipe.transformer.cnt = 0
+# pipe.transformer.num_steps = 28
+# pipe.transformer.rel_l1_thresh = (
+#     0.25  # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
+# )
+# pipe.transformer.accumulated_rel_l1_distance = 0
+# pipe.transformer.previous_modulated_input = None
+# pipe.transformer.previous_residual = None
+# for i in range(2):
+#     # pipe.to("cuda")
+#     img = pipe(
+#         prompt, 
+#         num_inference_steps=50,
+#         generator=paddle.Generator().manual_seed(seed)
+#         ).images[0]
+#     img.save("{}.png".format('Teacache_Flux'))

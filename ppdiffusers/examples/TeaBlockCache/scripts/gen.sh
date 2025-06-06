@@ -1,5 +1,22 @@
 # export FLAGS_sdpa_select_math=yes 
 
+CUDA_VISIBLE_DEVICES=1 python teablock_generation.py \
+--step_start 100 \
+--step_end 900 \
+--block_cache_start 3 \
+--single_block_cache_start 3 \
+--block_rel_l1_thresh 0.9 \
+--single_block_rel_l1_thresh 0.9 \
+--inference_step 50 \
+--taylor_max_order 3 \
+--taylor_first_enhance 2 \
+--teablock_taylor \
+--seed 124 \
+--dataset coco1k \
+--anno_path /root/paddlejob/workspace/env_run/test_data/coco1k \
+--saved_path /root/paddlejob/workspace/env_run/zx/output/computation_cache
+
+
 # CUDA_VISIBLE_DEVICES=4 nohup python teablock_generation.py \
 # --step_start 100 \
 # --step_end 900 \
@@ -14,7 +31,7 @@
 # --anno_path /root/paddlejob/workspace/env_run/test_data/coco1k \
 # --saved_path /root/paddlejob/workspace/env_run/zx/output/computation_cache > /root/paddlejob/workspace/env_run/zx/output/computation_cache/teablock_50steps_100_900_3_3_0.0_0.0_coco1k.log 2>&1 &
 
-# CUDA_VISIBLE_DEVICES=5 nohup python teablock_generation.py \
+# CUDA_VISIBLE_DEVICES=6 nohup python teablock_generation.py \
 # --step_start 100 \
 # --step_end 900 \
 # --block_cache_start 3 \
