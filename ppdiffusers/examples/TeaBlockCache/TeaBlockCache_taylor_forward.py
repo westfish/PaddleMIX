@@ -439,7 +439,7 @@ def TeaBlockCacheTaylorForward(
                             encoder_hidden_states=encoder_hidden_states,
                             temb=temb,
                             image_rotary_emb=image_rotary_emb,
-                            joint_attention_kwargs=joint_attention_kwargs,
+                            # joint_attention_kwargs=joint_attention_kwargs,  # 移除包含cache_dic的参数
                         )
                 else:
                     # Use cached output (simple cache reuse for per-block)
@@ -453,7 +453,7 @@ def TeaBlockCacheTaylorForward(
                             encoder_hidden_states=encoder_hidden_states,
                             temb=temb,
                             image_rotary_emb=image_rotary_emb,
-                            joint_attention_kwargs=joint_attention_kwargs,
+                            # joint_attention_kwargs=joint_attention_kwargs,  # 移除包含cache_dic的参数
                         )
                         block_heuristic_state['cached_hidden'] = hidden_states.clone()
                         block_heuristic_state['cached_encoder'] = encoder_hidden_states.clone()
@@ -554,7 +554,7 @@ def TeaBlockCacheTaylorForward(
                             hidden_states=hidden_states,
                             temb=temb,
                             image_rotary_emb=image_rotary_emb,
-                            joint_attention_kwargs=joint_attention_kwargs,
+                            # joint_attention_kwargs=joint_attention_kwargs,  # 移除包含cache_dic的参数
                         )
                 else:
                     # Use cached output for single blocks
@@ -566,7 +566,7 @@ def TeaBlockCacheTaylorForward(
                             hidden_states=hidden_states,
                             temb=temb,
                             image_rotary_emb=image_rotary_emb,
-                            joint_attention_kwargs=joint_attention_kwargs,
+                            # joint_attention_kwargs=joint_attention_kwargs,  # 移除包含cache_dic的参数
                         )
                         single_block_heuristic_state['cached_hidden'] = hidden_states.clone()
                 
