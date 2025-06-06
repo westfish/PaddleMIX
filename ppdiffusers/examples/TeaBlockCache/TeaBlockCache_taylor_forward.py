@@ -43,13 +43,20 @@ def fallback_step_taylor_formula(cache_dic: Dict, current: Dict) -> paddle.Tenso
     """
     Fallback implementation of step_taylor_formula
     """
-    if len(current['activated_steps']) < 2:
+    if len(current['activated_steps']) < 1:
         return None
     
     if len(cache_dic['cache']['hidden']) == 0:
         return None
     
+    if 0 not in cache_dic['cache']['hidden']:
+        return None
+    
     try:
+        # If we only have one activated step, just return the cached value
+        if len(current['activated_steps']) < 2:
+            return cache_dic['cache']['hidden'][0]
+        
         x = current['step'] - current['activated_steps'][-1]
         output = cache_dic['cache']['hidden'][0]
         
@@ -66,24 +73,22 @@ def fallback_step_taylor_formula(cache_dic: Dict, current: Dict) -> paddle.Tenso
                 output = output + term
         
         return output
-    except:
-        return None
+    except Exception as e:
+        print(f"Error in fallback_step_taylor_formula: {e}")
+        # Emergency fallback: return the 0th order term if available
+        return cache_dic['cache']['hidden'].get(0, None)
 
 
 def fallback_step_derivative_approximation(cache_dic: Dict, current: Dict, feature: paddle.Tensor):
     """
     Fallback implementation of step_derivative_approximation
     """
-    if len(current['activated_steps']) < 1:
-        cache_dic['cache']['hidden'][0] = feature
-        return
-    
     try:
-        # Update cache with current feature
+        # Always store the current feature as 0th order
         cache_dic['cache']['hidden'][0] = feature
         
         # Compute first derivative if we have enough history
-        if len(current['activated_steps']) >= 2 and 'previous_feature' in cache_dic:
+        if 'previous_feature' in cache_dic:
             cache_dic['cache']['hidden'][1] = feature - cache_dic['previous_feature']
         
         # Store current feature for next iteration
@@ -97,6 +102,8 @@ def fallback_step_derivative_approximation(cache_dic: Dict, current: Dict, featu
             
     except Exception as e:
         print(f"Error in fallback_step_derivative_approximation: {e}")
+        # Emergency fallback: just store the current feature
+        cache_dic['cache']['hidden'][0] = feature
 
 
 def compute_taylor_coefficients(residual_history: list, max_order: int = 3) -> dict:
@@ -332,7 +339,7 @@ def TeaBlockCacheTaylorForward(
                     use_global_taylor_prediction = False
 
         # Apply global Taylor prediction if possible
-        if use_global_taylor_prediction:
+        if use_global_taylor_prediction and len(current['activated_steps']) >= 1:
             if TAYLORSEER_UTILS_AVAILABLE:
                 predicted_hidden = step_taylor_formula(cache_dic=cache_dic, current=current)
             else:
@@ -583,10 +590,12 @@ def TeaBlockCacheTaylorForward(
             hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
             
             # Update global Taylor cache (like TeaCache)
-            if TAYLORSEER_UTILS_AVAILABLE:
-                step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
-            else:
-                fallback_step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
+            # Only update Taylor cache if we have enough activated steps
+            if len(current['activated_steps']) >= 1:
+                if TAYLORSEER_UTILS_AVAILABLE:
+                    step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
+                else:
+                    fallback_step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
 
         # Reset counter if we've reached the end
         if self.cnt == self.num_steps:
