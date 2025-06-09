@@ -105,6 +105,12 @@ def parse_args():
     
     # Taylor expansion parameters
     parser.add_argument(
+        "--rel_l1_thresh",
+        type=float,
+        default=0.4,
+        help="Relative L1 threshold for single transformer blocks",
+    )
+    parser.add_argument(
         "--taylor_max_order",
         type=int,
         default=3,
@@ -413,6 +419,7 @@ def main():
         pipe.transformer.single_block_heuristic_states = {}
         
         # Initialize Taylor cache system
+        pipe.transformer.rel_l1_thresh = args.rel_l1_thresh
         pipe.transformer.taylor_cache_system = {
             'max_order': args.taylor_max_order,
             'first_enhance': args.taylor_first_enhance,
