@@ -35,6 +35,13 @@ except ImportError:
     TEABLOCK_TAYLOR_AVAILABLE = False
     print("Warning: TeaBlockCache Taylor not available for comparison")
 
+try:
+    from PerBlockTaylor_forward import PerBlockTaylorPredictionForward
+    PERBLOCK_TAYLOR_AVAILABLE = True
+except ImportError:
+    PERBLOCK_TAYLOR_AVAILABLE = False
+    print("Warning: PerBlock Taylor not available for comparison")
+
 import sys
 sys.stdout.isatty = lambda: False
 
@@ -141,6 +148,12 @@ def parse_args():
         action='store_true', 
         default=False, 
         help='Run TeaBlockCache with Taylor expansion method',
+    )
+    parser.add_argument(
+        '--perblock_taylor', 
+        action='store_true', 
+        default=False, 
+        help='Run PerBlock Taylor prediction method',
     )
     parser.add_argument(
         '--teacache', 
@@ -474,6 +487,74 @@ def main():
             taylor_cache_size = len(pipe.transformer.taylor_cache_system['cache']['hidden'])
             print(f"Taylor cache activated steps: {taylor_steps}")
             print(f"Taylor cache coefficients stored: {taylor_cache_size}")
+        
+        del pipe
+
+    # PerBlock Taylor method  
+    if args.perblock_taylor == True and PERBLOCK_TAYLOR_AVAILABLE:
+        pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.bfloat16)
+        
+        # Replace forward method with PerBlock Taylor
+        FluxTransformer2DModel.forward = PerBlockTaylorPredictionForward
+        
+        # Configure PerBlock Taylor parameters
+        pipe.transformer.cnt = 0
+        pipe.transformer.num_steps = args.inference_step
+        pipe.transformer.step_start = args.step_start
+        pipe.transformer.step_end = args.step_end
+        pipe.transformer.block_cache_start = args.block_cache_start
+        pipe.transformer.single_block_cache_start = args.single_block_cache_start
+        pipe.transformer.block_rel_l1_thresh = args.block_rel_l1_thresh
+        pipe.transformer.single_block_rel_l1_thresh = args.single_block_rel_l1_thresh
+        
+        # Initialize Taylor cache dictionaries for each block
+        pipe.transformer.block_taylor_caches = {}
+        pipe.transformer.single_block_taylor_caches = {}
+        
+        saved_path = os.path.join(args.saved_path, f"perblock_taylor_{args.inference_step}steps_{args.step_start}_{args.step_end}_{args.block_cache_start}_{args.single_block_cache_start}_{args.block_rel_l1_thresh}_{args.single_block_rel_l1_thresh}_{args.dataset}")
+        os.makedirs(saved_path, exist_ok=True)
+        
+        print(f"=== Generating with PerBlock Taylor ({len(all_prompts)} images) ===")
+        print(f"PerBlock Taylor Configuration:")
+        print(f"  Time range: {args.step_start} - {args.step_end}")
+        print(f"  Block cache start: {args.block_cache_start}")
+        print(f"  Single block cache start: {args.single_block_cache_start}")
+        print(f"  Block threshold: {args.block_rel_l1_thresh}")
+        print(f"  Single block threshold: {args.single_block_rel_l1_thresh}")
+        
+        start_time = time.time()
+        
+        for i, prompt in enumerate(tqdm(all_prompts, desc="PerBlock Taylor")):
+            image = pipe(
+                prompt=prompt,
+                height=1024,
+                width=1024,
+                guidance_scale=3.5,
+                max_sequence_length=512,
+                num_inference_steps=args.inference_step,
+                generator=generator,
+            ).images[0]
+            image.save(os.path.join(saved_path, f"{i}.png"))
+        
+        total_time = time.time() - start_time
+        avg_time = total_time / len(all_prompts)
+        print(f"PerBlock Taylor: Total {total_time:.2f}s, Avg {avg_time:.2f}s/image")
+        
+        # Report cache statistics
+        if hasattr(pipe.transformer, 'block_taylor_caches'):
+            num_cached_blocks = len(pipe.transformer.block_taylor_caches)
+            print(f"Transformer blocks with Taylor cache: {num_cached_blocks}")
+        
+        if hasattr(pipe.transformer, 'single_block_taylor_caches'):
+            num_cached_single_blocks = len(pipe.transformer.single_block_taylor_caches)
+            print(f"Single blocks with Taylor cache: {num_cached_single_blocks}")
+        
+        # Report detailed Taylor cache statistics for each block
+        if hasattr(pipe.transformer, 'block_taylor_caches'):
+            for block_id, cache_info in pipe.transformer.block_taylor_caches.items():
+                hs_activated = len(cache_info['taylor_hs']['current']['activated_steps'])
+                enc_hs_activated = len(cache_info['taylor_enc_hs']['current']['activated_steps'])
+                print(f"  Block {block_id}: HS activated steps: {hs_activated}, Enc HS activated steps: {enc_hs_activated}")
         
         del pipe
 
