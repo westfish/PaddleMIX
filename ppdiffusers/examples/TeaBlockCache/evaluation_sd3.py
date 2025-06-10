@@ -161,7 +161,7 @@ if __name__ == '__main__':
     print(f"Found {len(dataloader_speedgen)} accelerated generated images")
     
     # 确保数据集长度匹配
-    assert len(dataloader_train) == len(dataloader_gen) == len(dataloader_speedgen), "训练集、原始生成和加速生成的图片数量必须相同，but {} != {} != {}"
+    assert len(dataloader_train) == len(dataloader_gen) == len(dataloader_speedgen), f"训练集、原始生成和加速生成的图片数量必须相同，but {len(dataloader_train)} != {len(dataloader_gen)} != {len(dataloader_speedgen)}"
     min_length = len(dataloader_train)
     
     # Calculate for original generation method vs training data
