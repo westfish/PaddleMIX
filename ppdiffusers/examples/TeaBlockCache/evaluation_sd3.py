@@ -2,15 +2,10 @@ import os
 import argparse
 import paddle
 
-from tgate import TgateSDXLLoader, TgateSDLoader,TgateFLUXLoader,TgatePixArtAlphaLoader
 from common_metrics.fid_score import ImagePathDataset,calculate_fid_given_paths
 from common_metrics.inception import InceptionV3
 from common_metrics.calculate_ssim import calculate_ssim_function
 from common_metrics.calculate_psnr import img_psnr
-from ppdiffusers import StableDiffusionXLPipeline, PixArtAlphaPipeline, StableVideoDiffusionPipeline
-from ppdiffusers import UNet2DConditionModel, LCMScheduler,FluxPipeline
-from ppdiffusers import DPMSolverMultistepScheduler
-from ppdiffusers.utils import load_image, export_to_video
 
 import paddle.vision.transforms as TF
 from tqdm import tqdm 
@@ -166,7 +161,7 @@ if __name__ == '__main__':
     print(f"Found {len(dataloader_speedgen)} accelerated generated images")
     
     # 确保数据集长度匹配
-    assert len(dataloader_train) == len(dataloader_gen) == len(dataloader_speedgen), "训练集、原始生成和加速生成的图片数量必须相同"
+    assert len(dataloader_train) == len(dataloader_gen) == len(dataloader_speedgen), "训练集、原始生成和加速生成的图片数量必须相同，but {} != {} != {}"
     min_length = len(dataloader_train)
     
     # Calculate for original generation method vs training data
