@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Per‑Block Taylor Prediction Cache  ‑‑ Further Stability Optimizations
-========================================================================
-• 引入动态 `max_skip` 和 训练步数阈值参数
-• 增强预测的稳定性，通过动态选择低阶或高阶 Taylor 展开
+Per‑Block Taylor Prediction (Stable Edition)
+===========================================
+• 仅当 EXT_AVAILABLE 且激活历史≥2 时才做预测  
+• 引入 max_skip(默认3)：限制连续跳帧数量  
+• fallback 模式下永不预测，只更新缓存  
 """
 
 from typing import Any, Dict, Optional, Union
@@ -20,22 +21,11 @@ try:
 except ImportError:
     EXT_AVAILABLE = False
 
-# ───── 回退实现：仅更新，不预测 ─────────────────────────────────────────────
+# ───── 安全回退：只更新，不预测 ─────────────────────────────────────────────
 def _fallback_cache_init():
     cache_dic = {"cache": {"hidden": {}}, "max_order": 3, "first_enhance": 2}
     current = {"step": 0, "activated_steps": [], "skip_streak": 0}
     return cache_dic, current
-
-def _fallback_taylor_predict(cache_dic: Dict, current: Dict):
-    if current["step"] < cache_dic.get("first_enhance", 2):
-        return None
-    if 0 not in cache_dic["cache"]["hidden"]:
-        return None
-    out = cache_dic["cache"]["hidden"][0]
-    for i in range(1, min(cache_dic.get("max_order", 3), len(cache_dic["cache"]["hidden"]) - 1) + 1):
-        if i in cache_dic["cache"]["hidden"]:
-            out = out + cache_dic["cache"]["hidden"][i] / np.math.factorial(i)
-    return out
 
 def _fallback_taylor_update(cache_dic: Dict, current: Dict, feat: paddle.Tensor):
     cache_dic["cache"]["hidden"][0] = feat
@@ -43,8 +33,8 @@ def _fallback_taylor_update(cache_dic: Dict, current: Dict, feat: paddle.Tensor)
         cache_dic["cache"]["hidden"][1] = feat - cache_dic["prev"]
     cache_dic["prev"] = feat.clone()
 
-# 设置一个全局默认：连续跳帧最多 5 步
-DEFAULT_MAX_SKIP = 5
+# 设置一个全局默认：连续跳帧最多 3 步
+DEFAULT_MAX_SKIP = 3
 
 # ───── 主前向 ──────────────────────────────────────────────────────────────
 def PerBlockTaylorPredictionForward(
@@ -112,7 +102,7 @@ def PerBlockTaylorPredictionForward(
             else:
                 st["cache_dic"], st["current"] = _fallback_cache_init()
 
-        max_skip = getattr(self, "block_max_skip", DEFAULT_MAX_SKIP)  # 可外部配置
+        max_skip = getattr(self, "block_max_skip", DEFAULT_MAX_SKIP)   # 可外部配置
 
         should_compute = force_compute
 
@@ -155,7 +145,7 @@ def PerBlockTaylorPredictionForward(
             # 预测失败 → 执行真实计算
 
         # ---- 真实计算 -----------------------------------------------------
-        st["current"]["skip_streak"] = 0  # 重置跳帧计数
+        st["current"]["skip_streak"] = 0                            # 重置跳帧计数
         st["current"]["activated_steps"].append(st["current"]["step"])
         encoder_hidden_states, hidden_states = block(
             hidden_states=hidden_states,
@@ -209,9 +199,11 @@ def PerBlockTaylorPredictionForward(
                     / st["prev_mod_inp"][:, :, :C].abs().mean()
                 )
                 st["acc_dist"] += float(rel)
-                should_compute = st["acc_dist"] >= self.single_block_rel_l1_thresh
-                if should_compute:
+                if st["acc_dist"] >= self.single_block_rel_l1_thresh:
                     st["acc_dist"] = 0.0
+                    should_compute = True
+                else:
+                    should_compute = False
             st["prev_mod_inp"] = mod_inp.clone()
 
         use_taylor = (
@@ -255,3 +247,6 @@ def PerBlockTaylorPredictionForward(
     if USE_PEFT_BACKEND:
         unscale_lora_layers(self, lora_scale)
     return Transformer2DModelOutput(sample=output) if return_dict else (output,)
+
+# 使用示例
+# model.forward = PerBlockTaylorPredictionForward.__get__(model, model.__class__)

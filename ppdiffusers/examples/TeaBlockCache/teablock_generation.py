@@ -432,6 +432,8 @@ def main():
         pipe.transformer.single_block_heuristic_states = {}
         
         # Initialize Taylor cache system
+        pipe.transformer.enable_teacache = True
+
         pipe.transformer.rel_l1_thresh = args.rel_l1_thresh
         pipe.transformer.taylor_cache_system = {
             'max_order': args.taylor_max_order,
@@ -441,7 +443,7 @@ def main():
             'step_counter': 0
         }
         
-        saved_path = os.path.join(args.saved_path, f"teablock_taylor_{args.inference_step}steps_{args.step_start}_{args.step_end}_{args.block_cache_start}_{args.single_block_cache_start}_{args.block_rel_l1_thresh}_{args.single_block_rel_l1_thresh}_{args.taylor_max_order}_{args.dataset}")
+        saved_path = os.path.join(args.saved_path, f"teablock_taylor_{args.inference_step}steps_{args.step_start}_{args.step_end}_{args.block_cache_start}_{args.single_block_cache_start}_{args.block_rel_l1_thresh}_{args.single_block_rel_l1_thresh}_{args.taylor_max_order}_{args.taylor_first_enhance}_{args.rel_l1_thresh}_{args.dataset}")
         os.makedirs(saved_path, exist_ok=True)
         
         print(f"=== Generating with TeaBlockCache + Taylor ({len(all_prompts)} images) ===")
@@ -453,6 +455,7 @@ def main():
         print(f"  Single block threshold: {args.single_block_rel_l1_thresh}")
         print(f"  Taylor max order: {args.taylor_max_order}")
         print(f"  Taylor first enhance: {args.taylor_first_enhance}")
+        print(f"  Taylor rel L1 threshold: {args.rel_l1_thresh}")
         
         start_time = time.time()
         
