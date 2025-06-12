@@ -1,0 +1,27 @@
+/root/miniconda3/envs/zx/lib/python3.10/site-packages/_distutils_hack/__init__.py:30: UserWarning: Setuptools is replacing distutils. Support for replacing an already imported distutils is deprecated. In the future, this condition will fail. Register concerns at https://github.com/pypa/setuptools/issues/new?template=distutils-deprecation.yml
+  warnings.warn(
+W0611 20:16:05.857611 69960 gpu_resources.cc:119] Please NOTE: device: 0, GPU Compute Capability: 8.0, Driver API Version: 12.2, Runtime API Version: 12.3
+W0611 20:16:05.859086 69960 gpu_resources.cc:164] device: 0, cuDNN Version: 9.3.
+W0611 20:16:05.859102 69960 gpu_resources.cc:196] WARNING: device: 0. The installed Paddle is compiled with CUDA 12.6, but CUDA runtime version in your machine is 12.2, which may cause serious incompatible bug. Please recompile or reinstall Paddle with compatible CUDA version.
+Warning: TGate not available for comparison
+Traceback (most recent call last):
+  File "/root/paddlejob/workspace/env_run/zx/PaddleMIX-westfish-teablockcache/ppdiffusers/examples/TeaBlockCache/teablock_generation.py", line 568, in <module>
+    main()
+  File "/root/paddlejob/workspace/env_run/zx/PaddleMIX-westfish-teablockcache/ppdiffusers/examples/TeaBlockCache/teablock_generation.py", line 245, in main
+    all_prompts = load_prompts(args)
+  File "/root/paddlejob/workspace/env_run/zx/PaddleMIX-westfish-teablockcache/ppdiffusers/examples/TeaBlockCache/teablock_generation.py", line 223, in load_prompts
+    df = pd.read_csv(os.path.join(args.anno_path, "coco1k.tsv"), sep="\t")
+  File "/root/miniconda3/envs/zx/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 1026, in read_csv
+    return _read(filepath_or_buffer, kwds)
+  File "/root/miniconda3/envs/zx/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 626, in _read
+    return parser.read(nrows)
+  File "/root/miniconda3/envs/zx/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 1923, in read
+    ) = self._engine.read(  # type: ignore[attr-defined]
+  File "/root/miniconda3/envs/zx/lib/python3.10/site-packages/pandas/io/parsers/c_parser_wrapper.py", line 234, in read
+    chunks = self._reader.read_low_memory(nrows)
+  File "parsers.pyx", line 838, in pandas._libs.parsers.TextReader.read_low_memory
+  File "parsers.pyx", line 905, in pandas._libs.parsers.TextReader._read_rows
+  File "parsers.pyx", line 874, in pandas._libs.parsers.TextReader._tokenize_rows
+  File "parsers.pyx", line 891, in pandas._libs.parsers.TextReader._check_tokenize_status
+  File "parsers.pyx", line 2061, in pandas._libs.parsers.raise_parser_error
+pandas.errors.ParserError: Error tokenizing data. C error: Calling read(nbytes) on source failed. Try engine='python'.
