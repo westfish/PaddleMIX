@@ -103,18 +103,37 @@ def AdaSkipFluxForward(
     scores_t = paddle.concat(scores, axis=0)                 # (n_blk,)
 
     # ---------- 3. 跳跃判定 ----------
-    delta0   = getattr(self, "adaskip_delta0", 0.25)
-    delta_t  = delta0 * math.exp(step / T * 1.2)
+    delta0   = getattr(self, "adaskip_delta0", 0.25)  # 0-1范围，0=全算，1=全跳
     max_skip = getattr(self, "adaskip_max_skip", 2)
-
+    
+    # 直接从scores_t角度进行调制
+    # 原理：scores_t > threshold 表示变化大需要执行，scores_t < threshold 表示变化小可以跳过
+    adjusted_scores_t = scores_t.clone()
+    
+    if delta0 <= 0:
+        # delta0=0: 让所有scores都变得很大，使其总是执行
+        adjusted_scores_t = adjusted_scores_t * 1000000
+    elif delta0 >= 1:
+        # delta0=1: 让所有scores都变得很小，使其总是跳过
+        adjusted_scores_t = adjusted_scores_t * 0.000001
+    else:
+        # 0<delta0<1: 对scores进行缩放
+        # delta0越大，scores越小，越倾向跳过
+        # delta0越小，scores越大，越倾向执行
+        scale_factor = (1 - delta0) * 10  # [0,1] -> [0,10]
+        adjusted_scores_t = adjusted_scores_t * scale_factor
+    
+    # 固定阈值
+    threshold = 0.25
+    
     exec_mask = []
     for i in range(n_blk):
         if not is_within_time_range:
             # 如果不在时间范围内，强制执行所有blocks但仍更新缓存
             exec_mask.append(True)
         else:
-            # 条件1：diff > delta  → 必算
-            cond_diff = scores_t[i].item() > delta_t
+            # 条件1：调制后的scores是否大于阈值
+            cond_diff = adjusted_scores_t[i].item() > threshold
             # 条件2：超过 max_skip 步强制算
             cond_step = step - cache["last_upd"][i] >= max_skip
             exec_mask.append(cond_diff or cond_step)
@@ -178,14 +197,28 @@ def AdaSkipFluxForward(
     single_scores_t = paddle.concat(single_scores, axis=0)   # (n_single_blk,)
     
     # 5.2 跳跃判定
+    # 对single_scores_t应用相同的调制
+    adjusted_single_scores_t = single_scores_t.clone()
+    
+    if delta0 <= 0:
+        # delta0=0: 让所有scores都变得很大，使其总是执行
+        adjusted_single_scores_t = adjusted_single_scores_t * 1000000
+    elif delta0 >= 1:
+        # delta0=1: 让所有scores都变得很小，使其总是跳过
+        adjusted_single_scores_t = adjusted_single_scores_t * 0.000001
+    else:
+        # 0<delta0<1: 对scores进行缩放
+        scale_factor = (1 - delta0) * 10
+        adjusted_single_scores_t = adjusted_single_scores_t * scale_factor
+    
     single_exec_mask = []
     for i in range(n_single_blk):
         if not is_within_time_range:
             # 如果不在时间范围内，强制执行所有single blocks但仍更新缓存
             single_exec_mask.append(True)
         else:
-            # 条件1：diff > delta  → 必算
-            cond_diff = single_scores_t[i].item() > delta_t
+            # 条件1：调制后的scores是否大于阈值
+            cond_diff = adjusted_single_scores_t[i].item() > threshold
             # 条件2：超过 max_skip 步强制算
             cond_step = step - cache["single_last_upd"][i] >= max_skip
             single_exec_mask.append(cond_diff or cond_step)
@@ -264,13 +297,13 @@ if __name__ == "__main__":
     tr.step_start = 200               # 从timestep=200开始启用AdaSkip
     tr.step_end = 800                 # 到timestep=800结束AdaSkip
     
-    # --------- 档位选择 ----------
-    # HQ (≈1.5×)
-    # tr.adaskip_delta0 = 0.25; tr.adaskip_max_skip = 1
-    # Balanced (≈1.9×)
-    # tr.adaskip_delta0 = 0.30; tr.adaskip_max_skip = 2
-    # Speed (≈2.3×)
-    tr.adaskip_delta0 = 0.9; tr.adaskip_max_skip = 3
+    # --------- 档位选择 (delta0: 0=全算, 1=全跳) ----------
+    # Conservative (保守型，少跳跃，高质量)
+    # tr.adaskip_delta0 = 0.2; tr.adaskip_max_skip = 1
+    # Balanced (平衡型，适中跳跃)
+    # tr.adaskip_delta0 = 0.4; tr.adaskip_max_skip = 2
+    # Aggressive (激进型，多跳跃，高速度)
+    tr.adaskip_delta0 = 0.6; tr.adaskip_max_skip = 3
 
     generator = paddle.Generator().manual_seed(42)
     start = time.time()
@@ -295,7 +328,8 @@ if __name__ == "__main__":
         step_start = getattr(tr, "step_start", 0)
         step_end = getattr(tr, "step_end", 1000)
         print(f"[配置] AdaSkip时间范围: {step_start} ≤ timestep ≤ {step_end}")
-        print(f"[配置] 参数设置: delta0={getattr(tr, 'adaskip_delta0', 0.25)}, max_skip={getattr(tr, 'adaskip_max_skip', 2)}")
+        delta0_val = getattr(tr, 'adaskip_delta0', 0.25)
+        print(f"[配置] 参数设置: delta0={delta0_val} (0=全算,1=全跳), max_skip={getattr(tr, 'adaskip_max_skip', 2)}")
         print(f"[说明] 在时间范围外强制执行所有blocks，但保持缓存更新")
         
         # 计算跳跃统计
