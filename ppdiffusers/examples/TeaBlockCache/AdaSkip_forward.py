@@ -362,28 +362,15 @@ if __name__ == "__main__":
     tr.num_steps = 50
     tr.adaskip_enabled = True          # 主开关
     
-    # --------- 时间范围控制 ----------
 
-    tr.step_start = 120               # 从timestep=200开始启用AdaSkip
-    tr.step_end = 970               # 到timestep=950结束AdaSkip（更大范围测试）
-    
-    # --------- 档位选择 (delta0: 0=全算, 1=全跳) ----------
-    # Conservative (保守型，少跳跃，高质量)
-    # tr.adaskip_delta0 = 0.2; tr.adaskip_max_skip = 1
-    # Balanced (平衡型，适中跳跃)
-    # tr.adaskip_delta0 = 0.4; tr.adaskip_max_skip = 2
-    # Aggressive (激进型，多跳跃，高速度) - 测试历史归一化
-    tr.adaskip_delta0 = 0.6; tr.adaskip_max_skip = 3
-    # Test extreme case (最大跳跃)
-    # tr.adaskip_delta0 = 1.0; tr.adaskip_max_skip = 5  # 测试极端情况
+
 
     # -------- C. Warmup阶段：收集历史数据 ----------
     print("\n[Warmup] 开始历史数据收集阶段...")
     warmup_steps = getattr(tr, 'adaskip_cache', {}).get('warmup_steps', 5) if hasattr(tr, 'adaskip_cache') else 5
     
     # 使用delta0=0进行warmup，确保收集到足够的历史数据
-    original_delta0 = tr.adaskip_delta0
-    tr.adaskip_delta0 = 0.0  # warmup期间强制执行所有blocks
+    tr.adaskip_delta0 = 0  # warmup期间强制执行所有blocks
     
     generator = paddle.Generator().manual_seed(42)
     start_warmup = time.time()
@@ -392,8 +379,8 @@ if __name__ == "__main__":
     print(f"[Warmup] 运行{warmup_steps + 5}步收集历史数据...")
     warmup_image = pipe(
         prompt=prompt,
-        height=512,        # 使用较小尺寸加速warmup
-        width=512,
+        height=1024,        # 使用较小尺寸加速warmup
+        width=1024,
         guidance_scale=3.5,
         max_sequence_length=512,
         num_inference_steps=warmup_steps + 5,  # 比warmup_steps多几步
@@ -402,9 +389,6 @@ if __name__ == "__main__":
     
     t_warmup = time.time() - start_warmup
     print(f"[Warmup] 完成，耗时：{t_warmup:.2f} s")
-    
-    # 恢复原始delta0设置
-    tr.adaskip_delta0 = original_delta0
     
     # 显示warmup后的历史信息
     if hasattr(tr, 'adaskip_cache'):
@@ -418,27 +402,16 @@ if __name__ == "__main__":
         cache["transformer_skip_count"] = 0  
         cache["single_exec_count"] = 0
         cache["single_skip_count"] = 0
-        
-        # 清除probe缓存（因为图像尺寸变化导致形状不匹配）
-        # 保留历史scores数据，但清除尺寸相关的缓存
-        n_blk = len(tr.transformer_blocks)
-        n_single_blk = len(tr.single_transformer_blocks)
-        cache["prev_probe"] = [None]*n_blk
-        cache["prev_out"] = [None]*n_blk
-        cache["prev_prev"] = [None]*n_blk
-        cache["prev_enc"] = [None]*n_blk
-        cache["last_upd"] = [0]*n_blk
-        cache["single_prev_probe"] = [None]*n_single_blk
-        cache["single_prev_out"] = [None]*n_single_blk
-        cache["single_prev_prev"] = [None]*n_single_blk
-        cache["single_last_upd"] = [0]*n_single_blk
-        cache["step"] = 0  # 重置step计数器
-        
-        print(f"[Warmup] 已清除probe缓存（尺寸变化），保留历史归一化数据")
+
+
+    # -------- D. 正式性能测试 ----------
+    # --------- 配置AdaSkip ----------
+    tr.step_start = 120               # 从timestep=200开始启用AdaSkip
+    tr.step_end = 970               # 到timestep=950结束AdaSkip（更大范围测试）
+    tr.adaskip_delta0 = 1; tr.adaskip_max_skip = 3
     
     print(f"[Warmup] 历史数据收集完成，开始正式性能测试（delta0={tr.adaskip_delta0}）...")
 
-    # -------- D. 正式性能测试 ----------
     generator = paddle.Generator().manual_seed(42)
     start = time.time()
     image = pipe(
