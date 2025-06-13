@@ -58,6 +58,7 @@ def AdaSkipFluxForward(
 
     # ---------- 1. 缓存区 ----------
     n_blk = len(self.transformer_blocks)
+    n_single_blk = len(self.single_transformer_blocks)
     if not hasattr(self, "adaskip_cache"):
         self.adaskip_cache = dict(
             prev_probe=[None]*n_blk,
@@ -65,13 +66,18 @@ def AdaSkipFluxForward(
             prev_prev=[None]*n_blk,
             prev_enc=[None]*n_blk,
             last_upd=[-1]*n_blk,           # 上次更新的 step
+            # single_transformer_blocks 缓存
+            single_prev_probe=[None]*n_single_blk,
+            single_prev_out=[None]*n_single_blk,
+            single_prev_prev=[None]*n_single_blk,
+            single_last_upd=[-1]*n_single_blk,
             step=0
         )
     cache = self.adaskip_cache
     cache["step"] += 1
     step, T = cache["step"], getattr(self, "num_steps", 50)
 
-    # ---------- 2. Probe & 分数 ----------
+    # ---------- 2. Probe & 分数 (transformer_blocks) ----------
     scores, probes = [], []
     for i, blk in enumerate(self.transformer_blocks):
         probe, *_ = blk.norm1(hidden_states, emb=temb)
@@ -137,12 +143,50 @@ def AdaSkipFluxForward(
                 idx = i % len(controlnet_block_samples) if controlnet_blocks_repeat else i // interval
                 hidden_states += controlnet_block_samples[idx]
 
-    # ---------- 5. single_transformer_blocks 一律真算 ----------
+    # ---------- 5. single_transformer_blocks 加速优化 ----------
     hidden_states = paddle.concat([encoder_hidden_states, hidden_states], 1)
-    for blk in self.single_transformer_blocks:
-        hidden_states = blk(hidden_states, temb=temb,
-                            image_rotary_emb=rotary,
-                            joint_attention_kwargs=joint_attention_kwargs)
+    
+    # 5.1 为 single_transformer_blocks 计算 probe & 分数
+    single_scores, single_probes = [], []
+    for i, blk in enumerate(self.single_transformer_blocks):
+        probe = blk.norm(hidden_states)  # single block 用 norm 而不是 norm1
+        single_probes.append(probe.detach())
+        if cache["single_prev_probe"][i] is None:
+            score = paddle.full([1], 1.0, dtype=hidden_states.dtype)
+        else:
+            rel = paddle.abs(probe - cache["single_prev_probe"][i]).mean() / \
+                  (paddle.abs(cache["single_prev_probe"][i]).mean() + 1e-6)
+            score = _poly(rel).unsqueeze(0)
+        single_scores.append(score)
+    single_scores_t = paddle.concat(single_scores, axis=0)   # (n_single_blk,)
+    
+    # 5.2 跳跃判定
+    single_exec_mask = []
+    for i in range(n_single_blk):
+        # 条件1：diff > delta  → 必算
+        cond_diff = single_scores_t[i].item() > delta_t
+        # 条件2：超过 max_skip 步强制算
+        cond_step = step - cache["single_last_upd"][i] >= max_skip
+        single_exec_mask.append(cond_diff or cond_step)
+    
+    # 5.3 single_transformer_blocks 执行循环
+    for i, blk in enumerate(self.single_transformer_blocks):
+        if single_exec_mask[i]:
+            # ---- 真算 ----
+            hidden_states = blk(hidden_states, temb=temb,
+                                image_rotary_emb=rotary,
+                                joint_attention_kwargs=joint_attention_kwargs)
+            # 更新缓存
+            cache["single_prev_prev"][i] = cache["single_prev_out"][i]
+            cache["single_prev_out"][i] = hidden_states.detach()
+            cache["single_prev_probe"][i] = single_probes[i]
+            cache["single_last_upd"][i] = step
+        else:
+            # ---- 跳过：复用 / 预测 ----
+            hidden_states = cache["single_prev_out"][i]
+            if cache["single_prev_prev"][i] is not None:
+                hidden_states = hidden_states + 0.5 * (hidden_states - cache["single_prev_prev"][i])
+    
     hidden_states = hidden_states[:, encoder_hidden_states.shape[1]:, ...]
 
     hidden_states = self.norm_out(hidden_states, temb)
@@ -157,14 +201,36 @@ if __name__ == "__main__":
     import paddle
     from ppdiffusers import FluxPipeline
     from ppdiffusers.models.transformer_flux import FluxTransformer2DModel
-    from ppdiffusers.models.transformer_flux import FluxTransformer2DModel
-    FluxTransformer2DModel._orig_forward = FluxTransformer2DModel.forward   # 备份
+
+    # 1. 基本参数
+    prompt = "A surreal landscape painted in vibrant watercolor"
+    num_inference_steps = 50                    # 推理步数
+
+    pipe = FluxPipeline.from_pretrained(
+        "black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.bfloat16
+    )
+    pipe.set_progress_bar_config(disable=True)
+
+
+    # # -------- A. 运行原生前向 ----------
+    generator = paddle.Generator().manual_seed(42)
+    start = time.time()
+    image = pipe(
+        prompt=prompt,
+        height=1024,
+        width=1024,
+        guidance_scale=3.5,
+        max_sequence_length=512,
+        num_inference_steps=num_inference_steps,
+        generator=generator,
+    ).images[0]
+    image.save('origin.png')
+    t_orig = time.time() - start
+    print(f"[原生] 生成 1 张图耗时：{t_orig:.2f} s")
+
+
+    # -------- B. 打补丁并启用 AdaSkip ----------
     FluxTransformer2DModel.forward = AdaSkipFluxForward                    # 猴补
-
-    pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype="float16")
-    # 保留原始 forward 以便后续还原
-    orig_forward = FluxTransformer2DModel.forward
-
     tr   = pipe.transformer
     tr.num_steps = 50
     tr.adaskip_enabled = True          # 主开关
@@ -177,9 +243,6 @@ if __name__ == "__main__":
     # Speed (≈2.3×)
     tr.adaskip_delta0 = 0.9; tr.adaskip_max_skip = 3
 
-    import time
-    num_inference_steps = 50
-    prompt = "A surreal landscape painted in vibrant watercolor"
     generator = paddle.Generator().manual_seed(42)
     start = time.time()
     image = pipe(
@@ -191,13 +254,33 @@ if __name__ == "__main__":
         num_inference_steps=num_inference_steps,
         generator=generator,
     ).images[0]
-    t_faar = time.time() - start
-    image.save('sfcache.png')
-    print(f"[StarFall‑Cache] 生成 1 张图耗时：{t_faar:.2f} s")
+    t_adaskip = time.time() - start
+    image.save('adaskip.png')
+    print(f"[AdaSkip] 生成 1 张图耗时：{t_adaskip:.2f} s")
+    
+    # 统计跳跃信息
+    if hasattr(tr, 'adaskip_cache'):
+        cache = tr.adaskip_cache
+        total_blocks = len(tr.transformer_blocks) + len(tr.single_transformer_blocks)
+        total_executions = cache["step"] * total_blocks
+        
+        # 计算 transformer_blocks 的跳跃数
+        transformer_skips = 0
+        for i in range(len(tr.transformer_blocks)):
+            if cache["last_upd"][i] < cache["step"]:
+                transformer_skips += cache["step"] - cache["last_upd"][i] - 1
+        
+        # 计算 single_transformer_blocks 的跳跃数  
+        single_skips = 0
+        for i in range(len(tr.single_transformer_blocks)):
+            if cache["single_last_upd"][i] < cache["step"]:
+                single_skips += cache["step"] - cache["single_last_upd"][i] - 1
+        
+        total_skips = transformer_skips + single_skips
+        skip_rate = total_skips / total_executions * 100
+        print(f"[统计] transformer_blocks 跳跃: {transformer_skips}, single_blocks 跳跃: {single_skips}")
+        print(f"[统计] 总跳跃率: {skip_rate:.1f}%")
 
-    # # 3. 还原 forward，以免影响后续实验
-    # FluxTransformer2DModel.forward = orig_forward
-
-    # # 4. 简单结论
-    # speedup = t_orig / t_faar if t_faar > 0 else float("inf")
-    # print(f"速度提升倍数 ≈ {speedup:.2f}×")
+    # 4. 简单结论
+    speedup = t_orig / t_adaskip if t_adaskip > 0 else float("inf")
+    print(f"速度提升倍数 ≈ {speedup:.2f}×")
