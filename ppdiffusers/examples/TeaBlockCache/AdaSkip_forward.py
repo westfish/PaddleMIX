@@ -417,6 +417,23 @@ if __name__ == "__main__":
         cache["transformer_skip_count"] = 0  
         cache["single_exec_count"] = 0
         cache["single_skip_count"] = 0
+        
+        # 清除probe缓存（因为图像尺寸变化导致形状不匹配）
+        # 保留历史scores数据，但清除尺寸相关的缓存
+        n_blk = len(tr.transformer_blocks)
+        n_single_blk = len(tr.single_transformer_blocks)
+        cache["prev_probe"] = [None]*n_blk
+        cache["prev_out"] = [None]*n_blk
+        cache["prev_prev"] = [None]*n_blk
+        cache["prev_enc"] = [None]*n_blk
+        cache["last_upd"] = [0]*n_blk
+        cache["single_prev_probe"] = [None]*n_single_blk
+        cache["single_prev_out"] = [None]*n_single_blk
+        cache["single_prev_prev"] = [None]*n_single_blk
+        cache["single_last_upd"] = [0]*n_single_blk
+        cache["step"] = 0  # 重置step计数器
+        
+        print(f"[Warmup] 已清除probe缓存（尺寸变化），保留历史归一化数据")
     
     print(f"[Warmup] 历史数据收集完成，开始正式性能测试（delta0={tr.adaskip_delta0}）...")
 
