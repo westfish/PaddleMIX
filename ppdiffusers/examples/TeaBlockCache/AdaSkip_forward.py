@@ -26,7 +26,7 @@ def AdaSkipFluxForward(
         controlnet_blocks_repeat: bool = False,
     ) -> Union[paddle.Tensor, Transformer2DModelOutput]:
 
-    # ---------- 0. 总开关 ----------
+    # ---------- 0. 总开关和时间范围控制 ----------
     if not getattr(self, "adaskip_enabled", True):
         return self._orig_forward(
             hidden_states, encoder_hidden_states, pooled_projections, timestep,
@@ -34,6 +34,12 @@ def AdaSkipFluxForward(
             controlnet_block_samples, controlnet_single_block_samples,
             return_dict, controlnet_blocks_repeat
         )
+    
+    # 检查是否在启用AdaSkip的时间范围内
+    step_start = getattr(self, "step_start", 0)      # 默认从0开始
+    step_end = getattr(self, "step_end", 1000)       # 默认到1000结束
+    current_timestep = timestep.item() if hasattr(timestep, 'item') else float(timestep)
+    is_within_time_range = step_start <= current_timestep <= step_end
 
     joint_attention_kwargs = joint_attention_kwargs.copy() if joint_attention_kwargs else {}
     lora_scale = joint_attention_kwargs.pop("scale", 1.0)
@@ -103,11 +109,15 @@ def AdaSkipFluxForward(
 
     exec_mask = []
     for i in range(n_blk):
-        # 条件1：diff > delta  → 必算
-        cond_diff = scores_t[i].item() > delta_t
-        # 条件2：超过 max_skip 步强制算
-        cond_step = step - cache["last_upd"][i] >= max_skip
-        exec_mask.append(cond_diff or cond_step)
+        if not is_within_time_range:
+            # 如果不在时间范围内，强制执行所有blocks但仍更新缓存
+            exec_mask.append(True)
+        else:
+            # 条件1：diff > delta  → 必算
+            cond_diff = scores_t[i].item() > delta_t
+            # 条件2：超过 max_skip 步强制算
+            cond_step = step - cache["last_upd"][i] >= max_skip
+            exec_mask.append(cond_diff or cond_step)
 
     # ---------- 4. Block 循环 ----------
     for i, blk in enumerate(self.transformer_blocks):
@@ -170,11 +180,15 @@ def AdaSkipFluxForward(
     # 5.2 跳跃判定
     single_exec_mask = []
     for i in range(n_single_blk):
-        # 条件1：diff > delta  → 必算
-        cond_diff = single_scores_t[i].item() > delta_t
-        # 条件2：超过 max_skip 步强制算
-        cond_step = step - cache["single_last_upd"][i] >= max_skip
-        single_exec_mask.append(cond_diff or cond_step)
+        if not is_within_time_range:
+            # 如果不在时间范围内，强制执行所有single blocks但仍更新缓存
+            single_exec_mask.append(True)
+        else:
+            # 条件1：diff > delta  → 必算
+            cond_diff = single_scores_t[i].item() > delta_t
+            # 条件2：超过 max_skip 步强制算
+            cond_step = step - cache["single_last_upd"][i] >= max_skip
+            single_exec_mask.append(cond_diff or cond_step)
     
     # 5.3 single_transformer_blocks 执行循环
     for i, blk in enumerate(self.single_transformer_blocks):
@@ -239,11 +253,17 @@ if __name__ == "__main__":
 
 
     # -------- B. 打补丁并启用 AdaSkip ----------
+    # 保存原始forward方法
+    FluxTransformer2DModel._orig_forward = FluxTransformer2DModel.forward
     FluxTransformer2DModel.forward = AdaSkipFluxForward                    # 猴补
     tr   = pipe.transformer
     tr.num_steps = 50
     tr.adaskip_enabled = True          # 主开关
-
+    
+    # --------- 时间范围控制 ----------
+    tr.step_start = 200               # 从timestep=200开始启用AdaSkip
+    tr.step_end = 800                 # 到timestep=800结束AdaSkip
+    
     # --------- 档位选择 ----------
     # HQ (≈1.5×)
     # tr.adaskip_delta0 = 0.25; tr.adaskip_max_skip = 1
@@ -270,6 +290,13 @@ if __name__ == "__main__":
     # 统计跳跃信息
     if hasattr(tr, 'adaskip_cache'):
         cache = tr.adaskip_cache
+        
+        # 显示时间范围配置
+        step_start = getattr(tr, "step_start", 0)
+        step_end = getattr(tr, "step_end", 1000)
+        print(f"[配置] AdaSkip时间范围: {step_start} ≤ timestep ≤ {step_end}")
+        print(f"[配置] 参数设置: delta0={getattr(tr, 'adaskip_delta0', 0.25)}, max_skip={getattr(tr, 'adaskip_max_skip', 2)}")
+        print(f"[说明] 在时间范围外强制执行所有blocks，但保持缓存更新")
         
         # 计算跳跃统计
         transformer_exec = cache.get("transformer_exec_count", 0)
