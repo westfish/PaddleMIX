@@ -71,6 +71,11 @@ def AdaSkipFluxForward(
             single_prev_out=[None]*n_single_blk,
             single_prev_prev=[None]*n_single_blk,
             single_last_upd=[-1]*n_single_blk,
+            # 统计信息
+            transformer_exec_count=0,
+            transformer_skip_count=0,
+            single_exec_count=0,
+            single_skip_count=0,
             step=0
         )
     cache = self.adaskip_cache
@@ -108,6 +113,7 @@ def AdaSkipFluxForward(
     for i, blk in enumerate(self.transformer_blocks):
         if exec_mask[i]:
             # ---- 真算 ----
+            cache["transformer_exec_count"] += 1
             if self.training and self.gradient_checkpointing:
                 def wrap(m):
                     return lambda *inp: m(*inp, joint_attention_kwargs=joint_attention_kwargs)
@@ -134,6 +140,7 @@ def AdaSkipFluxForward(
             cache["last_upd"][i]  = step
         else:
             # ---- 跳过：复用 / 预测 ----
+            cache["transformer_skip_count"] += 1
             hidden_states = cache["prev_out"][i]
             encoder_hidden_states = cache["prev_enc"][i]
             if cache["prev_prev"][i] is not None:
@@ -173,6 +180,7 @@ def AdaSkipFluxForward(
     for i, blk in enumerate(self.single_transformer_blocks):
         if single_exec_mask[i]:
             # ---- 真算 ----
+            cache["single_exec_count"] += 1
             hidden_states = blk(hidden_states, temb=temb,
                                 image_rotary_emb=rotary,
                                 joint_attention_kwargs=joint_attention_kwargs)
@@ -183,6 +191,7 @@ def AdaSkipFluxForward(
             cache["single_last_upd"][i] = step
         else:
             # ---- 跳过：复用 / 预测 ----
+            cache["single_skip_count"] += 1
             hidden_states = cache["single_prev_out"][i]
             if cache["single_prev_prev"][i] is not None:
                 hidden_states = hidden_states + 0.5 * (hidden_states - cache["single_prev_prev"][i])
@@ -261,25 +270,27 @@ if __name__ == "__main__":
     # 统计跳跃信息
     if hasattr(tr, 'adaskip_cache'):
         cache = tr.adaskip_cache
-        total_blocks = len(tr.transformer_blocks) + len(tr.single_transformer_blocks)
-        total_executions = cache["step"] * total_blocks
         
-        # 计算 transformer_blocks 的跳跃数
-        transformer_skips = 0
-        for i in range(len(tr.transformer_blocks)):
-            if cache["last_upd"][i] < cache["step"]:
-                transformer_skips += cache["step"] - cache["last_upd"][i] - 1
+        # 计算跳跃统计
+        transformer_exec = cache.get("transformer_exec_count", 0)
+        transformer_skip = cache.get("transformer_skip_count", 0)
+        single_exec = cache.get("single_exec_count", 0) 
+        single_skip = cache.get("single_skip_count", 0)
         
-        # 计算 single_transformer_blocks 的跳跃数  
-        single_skips = 0
-        for i in range(len(tr.single_transformer_blocks)):
-            if cache["single_last_upd"][i] < cache["step"]:
-                single_skips += cache["step"] - cache["single_last_upd"][i] - 1
+        total_exec = transformer_exec + single_exec
+        total_skip = transformer_skip + single_skip
+        total_operations = total_exec + total_skip
         
-        total_skips = transformer_skips + single_skips
-        skip_rate = total_skips / total_executions * 100
-        print(f"[统计] transformer_blocks 跳跃: {transformer_skips}, single_blocks 跳跃: {single_skips}")
-        print(f"[统计] 总跳跃率: {skip_rate:.1f}%")
+        if total_operations > 0:
+            skip_rate = total_skip / total_operations * 100
+            transformer_skip_rate = transformer_skip / (transformer_exec + transformer_skip) * 100 if (transformer_exec + transformer_skip) > 0 else 0
+            single_skip_rate = single_skip / (single_exec + single_skip) * 100 if (single_exec + single_skip) > 0 else 0
+            
+            print(f"[统计] transformer_blocks - 执行: {transformer_exec}, 跳跃: {transformer_skip} (跳跃率: {transformer_skip_rate:.1f}%)")
+            print(f"[统计] single_blocks - 执行: {single_exec}, 跳跃: {single_skip} (跳跃率: {single_skip_rate:.1f}%)")
+            print(f"[统计] 总体跳跃率: {skip_rate:.1f}% ({total_skip}/{total_operations})")
+        else:
+            print("[统计] 暂无统计数据")
 
     # 4. 简单结论
     speedup = t_orig / t_adaskip if t_adaskip > 0 else float("inf")
