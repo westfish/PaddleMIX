@@ -149,7 +149,7 @@ def AdaSkipFluxForward(
     # 5.1 为 single_transformer_blocks 计算 probe & 分数
     single_scores, single_probes = [], []
     for i, blk in enumerate(self.single_transformer_blocks):
-        probe = blk.norm(hidden_states, emb=temb)  # single block 的 norm 需要 emb 参数
+        probe, *_ = blk.norm(hidden_states, emb=temb)  # single block 的 norm 返回 tuple，需要解包
         single_probes.append(probe.detach())
         if cache["single_prev_probe"][i] is None:
             score = paddle.full([1], 1.0, dtype=hidden_states.dtype)
