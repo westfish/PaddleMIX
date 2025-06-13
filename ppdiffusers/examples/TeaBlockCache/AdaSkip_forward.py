@@ -363,8 +363,9 @@ if __name__ == "__main__":
     tr.adaskip_enabled = True          # 主开关
     
     # --------- 时间范围控制 ----------
-    tr.step_start = 50                # 从timestep=50开始启用AdaSkip  
-    tr.step_end = 950                 # 到timestep=950结束AdaSkip（更大范围测试）
+
+    tr.step_start = 120               # 从timestep=200开始启用AdaSkip
+    tr.step_end = 970               # 到timestep=950结束AdaSkip（更大范围测试）
     
     # --------- 档位选择 (delta0: 0=全算, 1=全跳) ----------
     # Conservative (保守型，少跳跃，高质量)
