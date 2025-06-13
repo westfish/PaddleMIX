@@ -261,8 +261,8 @@ if __name__ == "__main__":
     tr.adaskip_enabled = True          # 主开关
     
     # --------- 时间范围控制 ----------
-    tr.step_start = 200               # 从timestep=200开始启用AdaSkip
-    tr.step_end = 800                 # 到timestep=800结束AdaSkip
+    tr.step_start = 120               # 从timestep=200开始启用AdaSkip
+    tr.step_end = 970                 # 到timestep=800结束AdaSkip
     
     # --------- 档位选择 ----------
     # HQ (≈1.5×)
