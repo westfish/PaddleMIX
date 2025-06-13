@@ -25,7 +25,12 @@ records = [
     ("teablockcache 0.9", 1.66, 0.9385),
     ("teablockcache_taylor 2", 3.99, 0.7663),
     ("teablockcache_taylor 1", 2.98, 0.8665),
+    ("teablockcache_taylor 0.5", 2.13, 0.9364),
     ("sortblockcache", 1.66, 0.95176),
+    ("sortblockcache-fit-taylor", 1.81, 0.95413),
+    ("sortblockcache-fit-taylor", 2.21, 0.91984),
+    ("sortblockcache-fit-taylor", 2.86, 0.84326),
+    ("sortblockcache-fit-taylor", 3.08, 0.83731),
 ]
 # --------------------------
 
