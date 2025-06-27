@@ -14,6 +14,42 @@ import matplotlib.pyplot as plt
 
 # ---------- 数据 ----------
 records = [
+    # ("tgate",                     1.20, 0.740),
+    # ("pab",                       1.57, 0.8516),
+    # ("blockdance",                     2.10, 0.858),
+    # ("teacache",                  1.73, 0.797),
+    # ("firstblock_taylorseer 0.07", 2.03, 0.917),
+    # ("firstblock_taylorseer 0.14", 3.26, 0.799),
+    # ("teablockcache 0.0", 0.93, 1.0),
+    # ("teablockcache 0.3", 1.34, 0.9833),
+    # ("teablockcache 0.9", 1.66, 0.9385),
+    # ("teablockcache_taylor 2", 3.54, 0.7663),
+    # ("teablockcache_taylor 1", 2.72, 0.8665),
+    # ("teablockcache_taylor 0.5", 2.00, 0.9364),
+    # ("sortblockcache", 1.66, 0.95176),
+    # ("sortblockcache-fit-taylor", 1.81, 0.9520),
+    # ("sortblockcache-fit-taylor", 2.00, 0.9520),
+    # ("sortblockcache-fit-taylor", 2.307, 0.91),
+    # ("sortblockcache-fit-taylor", 2.88, 0.84326),
+    # ("sortblockcache-fit-taylor", 3.06, 0.83731),
+    # ("tgate",                     1.20, 0.740),
+    # ("pab",                       1.57, 0.8516),
+    # ("blockdance",                     2.10, 0.858),
+    # ("teacache",                  1.73, 0.797),
+    # ("firstblock_taylorseer 0.07", 2.03, 0.917),
+    # ("firstblock_taylorseer 0.14", 3.26, 0.799),
+    # ("teablockcache 0.0", 0.93, 1.0),
+    # ("teablockcache 0.3", 1.34, 0.9833),
+    # ("teablockcache 0.9", 1.66, 0.9385),
+    # ("teablockcache_taylor 2", 3.54, 0.7663),
+    # ("teablockcache_taylor 1", 2.72, 0.8665),
+    # ("teablockcache_taylor 0.5", 2.00, 0.9364),
+    # ("sortblockcache", 1.66, 0.95176),
+    # ("sortblockcache-fit-taylor", 1.81, 0.9520),
+    # ("sortblockcache-fit-taylor", 2.00, 0.9520),
+    # ("sortblockcache-fit-taylor", 2.307, 0.91),
+    # # ("sortblockcache-fit-taylor", 2.88, 0.84326),
+    # ("sortblockcache-fit-taylor", 3.06, 0.83731),
     ("tgate",                     1.20, 0.740),
     ("pab",                       1.57, 0.8516),
     ("blockdance",                     2.10, 0.858),
@@ -26,11 +62,12 @@ records = [
     ("teablockcache_taylor 2", 3.54, 0.7663),
     ("teablockcache_taylor 1", 2.72, 0.8665),
     ("teablockcache_taylor 0.5", 2.00, 0.9364),
-    ("sortblockcache", 1.66, 0.95176),
-    ("sortblockcache-fit-taylor", 1.81, 0.95413),
+    ("sortblockcache", 1.66, 0.95207),
+    ("sortblockcache-fit-taylor", 1.79, 0.96618),
+    ("sortblockcache-fit-taylor", 2.00, 0.9520),
     ("sortblockcache-fit-taylor", 2.21, 0.91984),
-    ("sortblockcache-fit-taylor", 2.86, 0.84326),
-    ("sortblockcache-fit-taylor", 3.00, 0.83731),
+    # ("sortblockcache-fit-taylor", 2.88, 0.84326),
+    ("sortblockcache-fit-taylor", 3.06, 0.83731),
 ]
 # --------------------------
 
@@ -55,14 +92,14 @@ for base, pts in groups.items():
     if len(pts) > 1:
         ax.plot(xs, ys, color=scatter.get_facecolors()[0])  # 连线
 
-    for x, y, lbl in pts:               # 给每点加完整标签
-        ax.text(x, y, lbl, fontsize=8, ha="right", va="bottom")
+    # for x, y, lbl in pts:               # 给每点加完整标签
+    #     ax.text(x, y, lbl, fontsize=8, ha="right", va="bottom")
 
 ax.set_xlabel("Speed-up (×)")
 ax.set_ylabel("coco1k-ssim (↑)")
 ax.set_title("Speed-up vs. Image Quality (SSIM)")
 ax.grid(True, linestyle="--", alpha=0.4)
-ax.legend(title="Model", fontsize=9)
+ax.legend(title="Model", fontsize=7)
 plt.tight_layout()
 
 # 有 / 无 GUI 的两种输出方式

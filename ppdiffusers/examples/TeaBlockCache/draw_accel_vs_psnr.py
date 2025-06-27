@@ -14,19 +14,51 @@ import matplotlib.pyplot as plt
 # ---------- 数据 ----------
 # 说明：第三列请填入 *实际* coco1k-PSNR（数值越高越好）
 records = [
-    ("tgate",                     1.20, 20.11),
-    ("pab",                       1.57, 24.67),
-    ("blockdance",                2.10, 24.65),
-    ("teacache",                  1.73, 21.68),
-    ("firstblock_taylorseer 0.07", 2.03, 27.92),
-    ("firstblock_taylorseer 0.14", 3.26, 21.74),
-    # ("teablockcache 0.0",    0.93, 100.00),
-    ("teablockcache 0.3",    1.34,  37.17),
-    ("teablockcache 0.9",    1.66,  29.81),
-    ("teablockcache_taylor 2",    3.99,  20.46),
-    ("teablockcache_taylor 1",    2.98,  24.47),
-    ("teablockcache_taylor 0.5",  2.13,  29.49),
-    ("sortblockcache",            1.66,  31.1875),
+    # ("tgate",                     1.20, 20.11),
+    # ("pab",                       1.57, 24.67),
+    # ("blockdance",                2.10, 24.65),
+    # ("teacache",                  1.73, 21.68),
+    # ("firstblock_taylorseer 0.07", 2.03, 27.92),
+    # ("firstblock_taylorseer 0.14", 3.26, 21.74),
+    # # ("teablockcache 0.0",    0.93, 100.00),
+    # ("teablockcache 0.3",    1.34,  37.17),
+    # ("teablockcache 0.9",    1.66,  29.81),
+    # ("teablockcache_taylor 2",    3.99,  20.46),
+    # ("teablockcache_taylor 1",    2.98,  24.47),
+    # ("teablockcache_taylor 0.5",  2.13,  29.49),
+    # ("sortblockcache",            1.66,  31.1875),
+    # ("tgate",                     1.20, 19.96),
+    # ("pab",                       1.57, 24.65),
+    # ("blockdance",                2.10, 24.57),
+    # ("teacache",                  1.73, 22.11),
+    # ("firstblock_taylorseer 0.07", 2.03, 27.59),
+    # ("firstblock_taylorseer 0.14", 3.26, 21.42),
+    # # ("teablockcache 0.0",    0.93, 100.00),
+    # ("teablockcache 0.3",    1.34,  37.17),
+    # ("teablockcache 0.9",    1.66,  29.81),
+    # ("teablockcache_taylor 2",    3.99,  20.46),
+    # ("teablockcache_taylor 1",    2.98,  24.47),
+    # ("teablockcache_taylor 0.5",  2.13,  29.49),
+    # ("sortblockcache",            1.66,  31.1875),
+
+    ("tgate",                     1.20, 19.96),
+    ("pab",                       1.57, 24.65),
+    ("blockdance",                     2.10, 24.57),
+    ("teacache",                  1.73, 22.11),
+    ("firstblock_taylorseer 0.07", 2.03, 27.59),
+    ("firstblock_taylorseer 0.14", 3.26, 21.42),
+    # ("teablockcache 0.0", 0.93, 100.0),
+    ("teablockcache 0.3", 1.34, 37.17),
+    ("teablockcache 0.9", 1.66, 29.81),
+    ("teablockcache_taylor 2", 3.54, 20.46),
+    ("teablockcache_taylor 1", 2.72, 24.47),
+    ("teablockcache_taylor 0.5", 2.00, 29.49),
+    ("sortblockcache", 1.66, 31.2019),
+    ("sortblockcache-fit-taylor", 1.79, 33.9615),
+    ("sortblockcache-fit-taylor", 2.00, 31.4957),
+    ("sortblockcache-fit-taylor", 2.21, 27.9479),
+    # ("sortblockcache-fit-taylor", 2.88, 23.6289),
+    ("sortblockcache-fit-taylor", 3.06, 23.3634),
 ]
 # --------------------------
 
@@ -51,14 +83,14 @@ for base, pts in groups.items():
     if len(pts) > 1:
         ax.plot(xs, ys, color=scatter.get_facecolors()[0])  # 连线
 
-    for x, y, lbl in pts:                         # 给每点加完整标签
-        ax.text(x, y, lbl, fontsize=8, ha="right", va="bottom")
+    # for x, y, lbl in pts:                         # 给每点加完整标签
+    #     ax.text(x, y, lbl, fontsize=8, ha="right", va="bottom")
 
 ax.set_xlabel("Speed-up (×)")
 ax.set_ylabel("coco1k-PSNR (↑)")
 ax.set_title("Speed-up vs. Image Quality (PSNR)")
 ax.grid(True, linestyle="--", alpha=0.4)
-ax.legend(title="Model", fontsize=9)
+ax.legend(title="Model", fontsize=7)
 plt.tight_layout()
 
 # 有 / 无 GUI 的两种输出方式
