@@ -1,0 +1,470 @@
+# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import paddle
+import numpy as np
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional, Tuple, Union
+
+from ..models import FluxTransformer2DModel
+from ..models.modeling_outputs import Transformer2DModelOutput
+from ..utils import USE_PEFT_BACKEND, is_paddle_version, logging, scale_lora_layers, unscale_lora_layers
+from .hooks import HookRegistry, ModelHook
+
+logger = logging.get_logger(__name__)
+
+
+@dataclass
+class SortTaylorConfig:
+    """
+    Configuration for SortTaylor optimization.
+
+    Args:
+        num_inference_steps (`int`, defaults to `50`):
+            The number of denoising steps. More denoising steps usually lead to a higher quality image at the
+            expense of slower inference.
+        timestep_start (`int`, defaults to `900`):
+            The timestep to start applying SortTaylor optimization.
+        timestep_end (`int`, defaults to `100`):
+            The timestep to end applying SortTaylor optimization.
+        percentage (`float`, defaults to `1.0`):
+            The percentage of blocks to compute in each layer.
+        step_num (`int`, defaults to `1`):
+            The step number for normal operation.
+        step_num2 (`int`, defaults to `5`):
+            The step number when within the timestep range.
+        beta (`float`, defaults to `0.3`):
+            The beta parameter for rescaling.
+        current_timestep_callback (`Callable[[], int]`, *optional*):
+            A callback function that returns the current inference timestep. This is required for timestep-based
+            optimization.
+    """
+    
+    num_inference_steps: int = 50
+    timestep_start: int = 900
+    timestep_end: int = 100
+    percentage: float = 1.0
+    step_num: int = 1
+    step_num2: int = 5
+    beta: float = 0.3
+    current_timestep_callback: Callable[[], int] = None
+
+    def __repr__(self) -> str:
+        return (
+            f"SortTaylorConfig("
+            f"  num_inference_steps={self.num_inference_steps},\n"
+            f"  timestep_start={self.timestep_start},\n"
+            f"  timestep_end={self.timestep_end},\n"
+            f"  percentage={self.percentage},\n"
+            f"  step_num={self.step_num},\n"
+            f"  step_num2={self.step_num2},\n"
+            f"  beta={self.beta},\n"
+            f"  current_timestep_callback={self.current_timestep_callback}\n"
+            ")"
+        )
+
+
+class SortTaylorState:
+    """
+    State for SortTaylor optimization.
+
+    Attributes:
+        count (`int`):
+            The current count for step tracking.
+        current_block_residual (`list`):
+            Current block residuals for transformer blocks.
+        current_block_encoder_residual (`list`):
+            Current encoder block residuals for transformer blocks.
+        current_single_block_residual (`list`):
+            Current single block residuals for single transformer blocks.
+        previous_block_residual (`list`):
+            Previous block residuals for transformer blocks.
+        previous_single_block_residual (`list`):
+            Previous single block residuals for single transformer blocks.
+        previous_encoder_block_residual (`list`):
+            Previous encoder block residuals.
+        result_list (`list`):
+            List of results for transformer blocks.
+        result_single_list (`list`):
+            List of results for single transformer blocks.
+        percentage (`float`):
+            Current percentage value.
+    """
+
+    def __init__(self, transformer_blocks_len: int, single_transformer_blocks_len: int):
+        self.count = 0
+        self.current_block_residual = [None] * transformer_blocks_len
+        self.current_block_encoder_residual = [None] * transformer_blocks_len
+        self.current_single_block_residual = [None] * single_transformer_blocks_len
+        self.previous_block_residual = [None] * transformer_blocks_len
+        self.previous_single_block_residual = [None] * single_transformer_blocks_len
+        self.previous_encoder_block_residual = [None] * transformer_blocks_len
+        self.result_list = []
+        self.result_single_list = []
+        self.percentage = 1.0
+
+    def reset(self, transformer_blocks_len: int, single_transformer_blocks_len: int):
+        self.count = 0
+        self.current_block_residual = [None] * transformer_blocks_len
+        self.current_block_encoder_residual = [None] * transformer_blocks_len
+        self.current_single_block_residual = [None] * single_transformer_blocks_len
+        self.previous_block_residual = [None] * transformer_blocks_len
+        self.previous_single_block_residual = [None] * single_transformer_blocks_len
+        self.previous_encoder_block_residual = [None] * transformer_blocks_len
+        self.result_list = []
+        self.result_single_list = []
+        self.percentage = 1.0
+
+    def __repr__(self):
+        return f"SortTaylorState(count={self.count}, percentage={self.percentage})"
+
+
+class SortTaylorHook(ModelHook):
+    """A hook that applies SortTaylor optimization to FluxTransformer2DModel."""
+    _is_stateful = True
+
+    def __init__(self, config: SortTaylorConfig):
+        super().__init__()
+        self.config = config
+
+    def initialize_hook(self, module):
+        if not isinstance(module, FluxTransformer2DModel):
+            raise ValueError("SortTaylor optimization can only be applied to FluxTransformer2DModel")
+        
+        transformer_blocks_len = len(module.transformer_blocks)
+        single_transformer_blocks_len = len(module.single_transformer_blocks)
+        self.state = SortTaylorState(transformer_blocks_len, single_transformer_blocks_len)
+        
+        # Store original forward method
+        self.original_forward = module.forward
+        
+        # Replace forward method with SortTaylor implementation
+        module.forward = self._sort_taylor_forward.__get__(module, type(module))
+        
+        # Set configuration attributes on module
+        module.num_steps = self.config.num_inference_steps
+        module.start = self.config.timestep_start
+        module.end = self.config.timestep_end
+        module.precentage = self.config.percentage
+        module.step_Num = self.config.step_num
+        module.step_Num2 = self.config.step_num2
+        module.beta = self.config.beta
+        module.count = 0
+        
+        # Initialize state attributes on module
+        module.current_block_residual = self.state.current_block_residual
+        module.current_block_encoder_residual = self.state.current_block_encoder_residual
+        module.current_single_block_residual = self.state.current_single_block_residual
+        module.previous_block_residual = self.state.previous_block_residual
+        module.previous_single_block_residual = self.state.previous_single_block_residual
+        module.previous_encoder_block_residual = self.state.previous_encoder_block_residual
+        module.result_list = self.state.result_list
+        module.result_single_list = self.state.result_single_list
+        
+        return module
+
+    def reset_state(self, module):
+        if hasattr(self, 'state'):
+            transformer_blocks_len = len(module.transformer_blocks)
+            single_transformer_blocks_len = len(module.single_transformer_blocks)
+            self.state.reset(transformer_blocks_len, single_transformer_blocks_len)
+            
+            # Reset module attributes
+            module.count = 0
+            module.current_block_residual = self.state.current_block_residual
+            module.current_block_encoder_residual = self.state.current_block_encoder_residual
+            module.current_single_block_residual = self.state.current_single_block_residual
+            module.previous_block_residual = self.state.previous_block_residual
+            module.previous_single_block_residual = self.state.previous_single_block_residual
+            module.previous_encoder_block_residual = self.state.previous_encoder_block_residual
+            module.result_list = self.state.result_list
+            module.result_single_list = self.state.result_single_list
+        
+        return module
+
+    def _derivative_approximation(self, feature, step_diff):
+        """Simple derivative approximation for demonstration."""
+        if step_diff == 0:
+            return feature
+        return feature / step_diff
+
+    def _taylor_formula(self, derivative, step_diff):
+        """Simple Taylor expansion for demonstration."""
+        return derivative * step_diff
+
+    def _sort_taylor_forward(
+        self,
+        hidden_states: paddle.Tensor,
+        encoder_hidden_states: paddle.Tensor = None,
+        pooled_projections: paddle.Tensor = None,
+        timestep: paddle.Tensor = None,
+        img_ids: paddle.Tensor = None,
+        txt_ids: paddle.Tensor = None,
+        guidance: paddle.Tensor = None,
+        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        controlnet_block_samples=None,
+        controlnet_single_block_samples=None,
+        return_dict: bool = True,
+        controlnet_blocks_repeat: bool = False,
+    ) -> Union[paddle.Tensor, Transformer2DModelOutput]:
+        """
+        SortTaylor optimized forward method for FluxTransformer2DModel.
+        """
+        if joint_attention_kwargs is None:
+            joint_attention_kwargs = {}
+
+        if joint_attention_kwargs is not None:
+            joint_attention_kwargs = joint_attention_kwargs.copy()
+            lora_scale = joint_attention_kwargs.pop("scale", 1.0)
+        else:
+            lora_scale = 1.0
+
+        if USE_PEFT_BACKEND:
+            scale_lora_layers(self, lora_scale)
+
+        hidden_states = self.x_embedder(hidden_states)
+
+        timestep = timestep.to(hidden_states.dtype) * 1000
+        if guidance is not None:
+            guidance = guidance.to(hidden_states.dtype) * 1000
+        else:
+            guidance = None
+
+        temb = (
+            self.time_text_embed(timestep, pooled_projections)
+            if guidance is None
+            else self.time_text_embed(timestep, guidance, pooled_projections)
+        )
+        encoder_hidden_states = self.context_embedder(encoder_hidden_states)
+
+        if txt_ids.ndim == 3:
+            txt_ids = txt_ids[0]
+        if img_ids.ndim == 3:
+            img_ids = img_ids[0]
+
+        ids = paddle.concat((txt_ids, img_ids), axis=0)
+        image_rotary_emb = self.pos_embed(ids)
+        
+        self.count += 1
+
+        # Reset at the beginning of inference
+        if timestep == 1000:
+            transformer_blocks_len = len(self.transformer_blocks)
+            single_transformer_blocks_len = len(self.single_transformer_blocks)
+            self.current_block_residual = [None] * transformer_blocks_len
+            self.current_block_encoder_residual = [None] * transformer_blocks_len
+            self.current_single_block_residual = [None] * single_transformer_blocks_len
+            self.previous_block_residual = [None] * transformer_blocks_len
+            self.previous_single_block_residual = [None] * single_transformer_blocks_len
+            self.previous_encoder_block_residual = [None] * transformer_blocks_len
+            self.count = 0
+            self.precentage = 1.0
+            self.result_list = []
+            self.result_single_list = []
+
+        # Determine step number based on timestep range
+        is_within_block_range = self.end <= timestep <= self.start
+        if is_within_block_range:
+            self.step_Num = self.step_Num2
+        else:
+            self.step_Num = 1
+
+        # Process transformer blocks
+        for index_block, block in enumerate(self.transformer_blocks):
+            should_compute_block = (self.count % self.step_Num == 0 or 
+                                  (self.result_list != [] and self.result_list[index_block] == 1))
+            
+            if should_compute_block:
+                ori_hidden_states = hidden_states.clone()
+                ori_encoder_hidden_states = encoder_hidden_states.clone()
+                
+                encoder_hidden_states, hidden_states = block(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    temb=temb,
+                    image_rotary_emb=image_rotary_emb,
+                )
+
+                # Apply controlnet residuals if needed
+                if controlnet_block_samples is not None:
+                    interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
+                    interval_control = int(np.ceil(interval_control))
+                    if controlnet_blocks_repeat:
+                        hidden_states = (
+                            hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
+                        )
+                    else:
+                        hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
+
+                # Store residuals for future approximations
+                if self.count % self.step_Num == 0:
+                    self.previous_block_residual[index_block] = hidden_states.clone() - ori_hidden_states
+                    self.previous_encoder_block_residual[index_block] = encoder_hidden_states.clone() - ori_encoder_hidden_states
+            else:
+                # Use Taylor approximation
+                if self.count % self.step_Num == 1 and index_block < len(self.previous_block_residual):
+                    if self.previous_block_residual[index_block] is not None:
+                        self.current_block_residual[index_block] = self.previous_block_residual[index_block]
+                    if self.previous_encoder_block_residual[index_block] is not None:
+                        self.current_block_encoder_residual[index_block] = self.previous_encoder_block_residual[index_block]
+                
+                # Apply approximated residuals
+                if (index_block < len(self.previous_block_residual) and 
+                    self.previous_block_residual[index_block] is not None):
+                    hidden_states += self.previous_block_residual[index_block]
+                if (index_block < len(self.previous_encoder_block_residual) and 
+                    self.previous_encoder_block_residual[index_block] is not None):
+                    encoder_hidden_states += self.previous_encoder_block_residual[index_block]
+
+        hidden_states = paddle.concat([encoder_hidden_states, hidden_states], axis=1)
+
+        # Process single transformer blocks
+        for index_block, block in enumerate(self.single_transformer_blocks):
+            should_compute_block = (self.count % self.step_Num == 0 or 
+                                  (self.result_single_list != [] and self.result_single_list[index_block] == 1))
+            
+            if should_compute_block:
+                ori_hidden_states = hidden_states.clone()
+                
+                hidden_states = block(
+                    hidden_states=hidden_states,
+                    temb=temb,
+                    image_rotary_emb=image_rotary_emb,
+                )
+
+                # Apply controlnet residuals if needed
+                if controlnet_single_block_samples is not None:
+                    interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
+                    interval_control = int(np.ceil(interval_control))
+                    hidden_states[:, encoder_hidden_states.shape[1]:, ...] = (
+                        hidden_states[:, encoder_hidden_states.shape[1]:, ...]
+                        + controlnet_single_block_samples[index_block // interval_control]
+                    )
+
+                if self.count % self.step_Num == 0:
+                    self.previous_single_block_residual[index_block] = hidden_states.clone() - ori_hidden_states
+            else:
+                # Use Taylor approximation
+                if self.count % self.step_Num == 1 and index_block < len(self.previous_single_block_residual):
+                    if self.previous_single_block_residual[index_block] is not None:
+                        self.current_single_block_residual[index_block] = self.previous_single_block_residual[index_block]
+                
+                # Apply approximated residuals
+                if (index_block < len(self.previous_single_block_residual) and 
+                    self.previous_single_block_residual[index_block] is not None):
+                    hidden_states += self.previous_single_block_residual[index_block]
+
+        # Compute similarity and update result lists
+        if self.count % self.step_Num == 1:
+            coefficients = [5.67621e-14, -1.36659e-10, 1.16246e-7, -3.97725e-5, 0.00361, 0.56088]
+            rescale_func = np.poly1d(coefficients)
+            self.precentage = rescale_func(timestep.item()) * self.beta
+            
+            # Compute cosine similarities for transformer blocks
+            cosine_similarities = []
+            for i in range(len(self.transformer_blocks)):
+                if (self.previous_block_residual[i] is not None and 
+                    self.current_block_residual[i] is not None):
+                    cosine_similarity = paddle.nn.functional.cosine_similarity(
+                        self.previous_block_residual[i][:, :, :self.previous_block_residual[i].shape[-1]//8].to(paddle.float32),
+                        self.current_block_residual[i][:, :, :self.current_block_residual[i].shape[-1]//8].to(paddle.float32),
+                        axis=-1
+                    )
+                    cosine_similarities.append(cosine_similarity.mean().item())
+                else:
+                    cosine_similarities.append(1.0)  # Default to high similarity
+            
+            if cosine_similarities:
+                sorted_cos = sorted(cosine_similarities)
+                threshold = sorted_cos[int(len(self.transformer_blocks) * self.precentage)]
+                self.result_list = [1 if j <= threshold else 0 for j in cosine_similarities]
+            
+            # Compute cosine similarities for single transformer blocks
+            cosine_single_similarities = []
+            for i in range(len(self.single_transformer_blocks)):
+                if (self.previous_single_block_residual[i] is not None and 
+                    self.current_single_block_residual[i] is not None):
+                    cosine_similarity = paddle.nn.functional.cosine_similarity(
+                        self.previous_single_block_residual[i][:, :, :self.previous_single_block_residual[i].shape[-1]//8].to(paddle.float32),
+                        self.current_single_block_residual[i][:, :, :self.current_single_block_residual[i].shape[-1]//8].to(paddle.float32),
+                        axis=-1
+                    )
+                    cosine_single_similarities.append(cosine_similarity.mean().item())
+                else:
+                    cosine_single_similarities.append(1.0)  # Default to high similarity
+            
+            if cosine_single_similarities:
+                sorted_cos = sorted(cosine_single_similarities)
+                threshold = sorted_cos[int(len(self.single_transformer_blocks) * self.precentage)]
+                self.result_single_list = [1 if j <= threshold else 0 for j in cosine_single_similarities]
+
+        hidden_states = hidden_states[:, encoder_hidden_states.shape[1]:, ...]
+
+        hidden_states = self.norm_out(hidden_states, temb)
+        output = self.proj_out(hidden_states)
+
+        if USE_PEFT_BACKEND:
+            unscale_lora_layers(self, lora_scale)
+
+        if not return_dict:
+            return (output,)
+
+        return Transformer2DModelOutput(sample=output)
+
+
+def apply_sort_taylor(module: paddle.nn.Layer, config: SortTaylorConfig):
+    """
+    Apply SortTaylor optimization to a given FluxTransformer2DModel.
+
+    SortTaylor is an optimization method that uses Taylor series approximation to skip certain transformer
+    block computations during inference, reducing computational cost while maintaining output quality.
+
+    Args:
+        module (`paddle.nn.Layer`):
+            The FluxTransformer2DModel module to apply SortTaylor optimization to.
+        config (`SortTaylorConfig`):
+            The configuration to use for SortTaylor optimization.
+
+    Example:
+
+    ```python
+    >>> import paddle
+    >>> from ppdiffusers import FluxPipeline, SortTaylorConfig, apply_sort_taylor
+
+    >>> pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
+
+    >>> config = SortTaylorConfig(
+    ...     num_inference_steps=50,
+    ...     timestep_start=900,
+    ...     timestep_end=100,
+    ...     beta=0.3,
+    ...     current_timestep_callback=lambda: pipe._current_timestep,
+    ... )
+    >>> apply_sort_taylor(pipe.transformer, config)
+    ```
+    """
+    if not isinstance(module, FluxTransformer2DModel):
+        raise ValueError("SortTaylor optimization can only be applied to FluxTransformer2DModel")
+    
+    if config.current_timestep_callback is None:
+        logger.warning(
+            "The `current_timestep_callback` function is not provided. SortTaylor may not work optimally "
+            "without access to the current timestep information."
+        )
+
+    registry = HookRegistry.check_if_exists_or_initialize(module)
+    hook = SortTaylorHook(config)
+    registry.register_hook(hook, 'sort_taylor')
+    
+    logger.info("SortTaylor optimization has been applied to the FluxTransformer2DModel") 
