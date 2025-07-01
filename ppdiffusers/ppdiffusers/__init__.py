@@ -112,6 +112,8 @@ else:
             "HookRegistry",
             "PyramidAttentionBroadcastConfig",
             "apply_pyramid_attention_broadcast",
+            "SortTaylorConfig",
+            "apply_sort_taylor",
         ]
     )
     _import_structure["models"].extend(
@@ -575,6 +577,13 @@ if TYPE_CHECKING or PPDIFFUSERS_SLOW_IMPORT:
             VQModel,
             MochiTransformer3DModel,
             WanTransformer3DModel,
+        )
+        from .hooks import (
+            HookRegistry,
+            PyramidAttentionBroadcastConfig,
+            apply_pyramid_attention_broadcast,
+            SortTaylorConfig,
+            apply_sort_taylor,
         )
         from .optimization import (
             get_constant_schedule,
