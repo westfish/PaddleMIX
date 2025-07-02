@@ -70,6 +70,7 @@ image = pipeline(
 end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Elapsed time: {elapsed_time:.2f} seconds")
+image.save("text_to_image_generation-teablockcache-taylor-flux-dev-result-0.png")
 
 # Generate second image
 start_time = time.time()
@@ -86,6 +87,7 @@ image = pipeline(
 end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Elapsed time: {elapsed_time:.2f} seconds")
+image.save("text_to_image_generation-teablockcache-taylor-flux-dev-result-1.png")
 
 # Report cache statistics
 if hasattr(pipeline.transformer, 'block_heuristic_states'):
@@ -103,4 +105,3 @@ if hasattr(pipeline.transformer, 'taylor_cache_system'):
     print(f"Taylor cache activated steps: {taylor_steps}")
     print(f"Taylor cache coefficients stored: {taylor_cache_size}")
 
-image.save("text_to_image_generation-teablockcache-taylor-flux-dev-result.png")

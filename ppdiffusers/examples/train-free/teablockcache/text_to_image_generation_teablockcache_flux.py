@@ -59,6 +59,7 @@ image = pipeline(
 end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Elapsed time: {elapsed_time:.2f} seconds")
+image.save("text_to_image_generation-teablockcache-flux-dev-result-0.png")
 
 # Generate second image
 start_time = time.time()
@@ -75,6 +76,7 @@ image = pipeline(
 end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Elapsed time: {elapsed_time:.2f} seconds")
+image.save("text_to_image_generation-teablockcache-flux-dev-result-1.png")
 
 # Report cache statistics
 if hasattr(pipeline.transformer, 'block_heuristic_states'):
@@ -85,4 +87,3 @@ if hasattr(pipeline.transformer, 'single_block_heuristic_states'):
     num_cached_single_blocks = len(pipeline.transformer.single_block_heuristic_states)
     print(f"Single blocks cached: {num_cached_single_blocks}")
 
-image.save("text_to_image_generation-teablockcache-flux-dev-result.png")

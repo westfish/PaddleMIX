@@ -7,119 +7,9 @@ import paddle.nn.functional as F
 from ppdiffusers.models.modeling_outputs import  Transformer2DModelOutput
 from ppdiffusers.utils import USE_PEFT_BACKEND, is_torch_version, logger, scale_lora_layers, unscale_lora_layers
 
-# Try to import external modules, with fallback implementations
-try:
-    from cache_functions import cache_init_step, cal_type
-    CACHE_FUNCTIONS_AVAILABLE = True
-except ImportError:
-    CACHE_FUNCTIONS_AVAILABLE = False
-    print("Warning: cache_functions not available, using fallback")
-
-try:
-    from taylorseer_utils import step_taylor_formula, step_derivative_approximation
-    TAYLORSEER_UTILS_AVAILABLE = True
-except ImportError:
-    TAYLORSEER_UTILS_AVAILABLE = False
-    print("Warning: taylorseer_utils not available, using fallback")
-
-# Safety switch: disable external modules if they cause issues
-# Set this to False to force use of fallback implementations
-USE_EXTERNAL_MODULES = True
-if not USE_EXTERNAL_MODULES:
-    CACHE_FUNCTIONS_AVAILABLE = False
-    TAYLORSEER_UTILS_AVAILABLE = False
-    print("External modules disabled for safety, using fallback implementations")
-
-
-def fallback_cache_init_step(model, max_order=3, first_enhance=2):
-    """
-    Fallback implementation of cache_init_step with configurable parameters
-    """
-    cache_dic = {
-        'cache': {'hidden': {}},
-        'max_order': max_order,
-        'first_enhance': first_enhance
-    }
-    current = {
-        'step': 0,
-        'activated_steps': []
-    }
-    return cache_dic, current
-
-
-def fallback_step_taylor_formula(cache_dic: Dict, current: Dict) -> paddle.Tensor:
-    """
-    Fallback implementation of step_taylor_formula with configurable parameters
-    """
-    if len(current['activated_steps']) < 1:
-        return None
-    
-    if len(cache_dic['cache']['hidden']) == 0:
-        return None
-    
-    if 0 not in cache_dic['cache']['hidden']:
-        return None
-    
-    # Check first_enhance threshold
-    first_enhance = cache_dic.get('first_enhance', 2)
-    if current['step'] < first_enhance:
-        return None
-    
-    try:
-        # If we only have one activated step, just return the cached value
-        if len(current['activated_steps']) < 2:
-            return cache_dic['cache']['hidden'][0]
-        
-        x = current['step'] - current['activated_steps'][-1]
-        output = cache_dic['cache']['hidden'][0]
-        
-        # Get configured max_order
-        max_order = cache_dic.get('max_order', 3)
-        
-        # Add higher order terms if available, up to max_order
-        for i in range(1, min(max_order, len(cache_dic['cache']['hidden']))):
-            if i in cache_dic['cache']['hidden']:
-                term = cache_dic['cache']['hidden'][i] * (x ** i)
-                if i > 1:
-                    # Factorial approximation for higher orders
-                    factorial = 1
-                    for j in range(1, i + 1):
-                        factorial *= j
-                    term = term / factorial
-                output = output + term
-        
-        return output
-    except Exception as e:
-        print(f"Error in fallback_step_taylor_formula: {e}")
-        # Emergency fallback: return the 0th order term if available
-        return cache_dic['cache']['hidden'].get(0, None)
-
-
-def fallback_step_derivative_approximation(cache_dic: Dict, current: Dict, feature: paddle.Tensor):
-    """
-    Fallback implementation of step_derivative_approximation
-    """
-    try:
-        # Always store the current feature as 0th order
-        cache_dic['cache']['hidden'][0] = feature
-        
-        # Compute first derivative if we have enough history
-        if 'previous_feature' in cache_dic:
-            cache_dic['cache']['hidden'][1] = feature - cache_dic['previous_feature']
-        
-        # Store current feature for next iteration
-        cache_dic['previous_feature'] = feature.clone()
-        
-        # Limit cache size for stability using configured max_order
-        max_order = cache_dic.get('max_order', 3)
-        keys_to_remove = [k for k in cache_dic['cache']['hidden'].keys() if k >= max_order]
-        for k in keys_to_remove:
-            del cache_dic['cache']['hidden'][k]
-            
-    except Exception as e:
-        print(f"Error in fallback_step_derivative_approximation: {e}")
-        # Emergency fallback: just store the current feature
-        cache_dic['cache']['hidden'][0] = feature
+# Import external modules
+from cache_functions import cache_init_step, cal_type
+from taylorseer_utils import step_taylor_formula, step_derivative_approximation
 
 
 def compute_taylor_coefficients(residual_history: list, max_order: int = 3) -> dict:
@@ -237,13 +127,10 @@ def TeaBlockCacheTaylorForward(
                 max_order = self.taylor_cache_system.get('max_order', 3)
                 first_enhance = self.taylor_cache_system.get('first_enhance', 2)
             
-            if CACHE_FUNCTIONS_AVAILABLE:
-                joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = cache_init_step(self)
-                # Override parameters in case external function doesn't use them
-                joint_attention_kwargs['cache_dic']['max_order'] = max_order
-                joint_attention_kwargs['cache_dic']['first_enhance'] = first_enhance
-            else:
-                joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = fallback_cache_init_step(self, max_order, first_enhance)
+            joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = cache_init_step(self)
+            # Override parameters in case external function doesn't use them
+            joint_attention_kwargs['cache_dic']['max_order'] = max_order
+            joint_attention_kwargs['cache_dic']['first_enhance'] = first_enhance
 
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -374,16 +261,7 @@ def TeaBlockCacheTaylorForward(
         )
         
         if can_use_taylor:
-            predicted_hidden = None
-            # External taylorseer_utils may have different requirements, use fallback for safety
-            if TAYLORSEER_UTILS_AVAILABLE and len(current['activated_steps']) >= 2:
-                try:
-                    predicted_hidden = step_taylor_formula(cache_dic=cache_dic, current=current)
-                except (IndexError, KeyError) as e:
-                    print(f"External step_taylor_formula failed: {e}, using fallback")
-                    predicted_hidden = fallback_step_taylor_formula(cache_dic=cache_dic, current=current)
-            else:
-                predicted_hidden = fallback_step_taylor_formula(cache_dic=cache_dic, current=current)
+            predicted_hidden = step_taylor_formula(cache_dic=cache_dic, current=current)
             
             if predicted_hidden is not None and paddle.isfinite(predicted_hidden).all():
                 # Use Taylor prediction, skip all computation
@@ -632,16 +510,7 @@ def TeaBlockCacheTaylorForward(
             # Update global Taylor cache (like TeaCache)
             # Only update Taylor cache if we have enough activated steps
             if len(current['activated_steps']) >= 1:
-                # External taylorseer_utils requires at least 2 activated_steps
-                # Use fallback for safer operation or when insufficient history
-                if TAYLORSEER_UTILS_AVAILABLE and len(current['activated_steps']) >= 2:
-                    try:
-                        step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
-                    except (IndexError, KeyError) as e:
-                        print(f"External step_derivative_approximation failed: {e}, using fallback")
-                        fallback_step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
-                else:
-                    fallback_step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
+                step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
 
         # Reset counter if we've reached the end
         if self.cnt == self.num_steps:
