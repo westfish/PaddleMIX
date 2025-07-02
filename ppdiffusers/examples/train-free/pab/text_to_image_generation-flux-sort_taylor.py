@@ -29,7 +29,7 @@ config = SortTaylorConfig(
     step_num=1,
     step_num2=5,
     beta=0.3,
-    current_timestep_callback=lambda: getattr(pipe, '_current_timestep', None),
+    current_timestep_callback=lambda: pipe._current_timestep,
 )
 
 # Apply SortTaylor optimization using the integrated framework
