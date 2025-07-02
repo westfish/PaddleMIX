@@ -7,73 +7,162 @@ import paddle.nn.functional as F
 from ppdiffusers.models.modeling_outputs import  Transformer2DModelOutput
 from ppdiffusers.utils import USE_PEFT_BACKEND, is_torch_version, logger, scale_lora_layers, unscale_lora_layers
 
-# Import external modules
-from cache_functions import cache_init_step, cal_type
-from taylorseer_utils import step_taylor_formula, step_derivative_approximation
+# Use only fallback implementations
+
+
+def fallback_cache_init_step(model, max_order=3, first_enhance=2):
+    """
+    Fallback implementation of cache_init_step with configurable parameters
+    """
+    cache_dic = {
+        'cache': {'hidden': {}},
+        'max_order': max_order,
+        'first_enhance': first_enhance
+    }
+    current = {
+        'step': 0,
+        'activated_steps': []
+    }
+    return cache_dic, current
+
+
+def fallback_step_taylor_formula(cache_dic: Dict, current: Dict) -> paddle.Tensor:
+    """
+    Fallback implementation of step_taylor_formula with configurable parameters
+    """
+    if len(current['activated_steps']) < 1:
+        return None
+    
+    if len(cache_dic['cache']['hidden']) == 0:
+        return None
+    
+    if 0 not in cache_dic['cache']['hidden']:
+        return None
+    
+    # Check first_enhance threshold
+    first_enhance = cache_dic.get('first_enhance', 2)
+    if current['step'] < first_enhance:
+        return None
+    
+    try:
+        # If we only have one activated step, just return the cached value
+        if len(current['activated_steps']) < 2:
+            return cache_dic['cache']['hidden'][0]
+        
+        x = current['step'] - current['activated_steps'][-1]
+        output = cache_dic['cache']['hidden'][0]
+        
+        # Get configured max_order
+        max_order = cache_dic.get('max_order', 3)
+        
+        # Add higher order terms if available, up to max_order
+        for i in range(1, min(max_order, len(cache_dic['cache']['hidden']))):
+            if i in cache_dic['cache']['hidden']:
+                term = cache_dic['cache']['hidden'][i] * (x ** i)
+                if i > 1:
+                    # Factorial approximation for higher orders
+                    factorial = 1
+                    for j in range(1, i + 1):
+                        factorial *= j
+                    term = term / factorial
+                output = output + term
+        
+        return output
+    except Exception as e:
+        print(f"Error in fallback_step_taylor_formula: {e}")
+        # Emergency fallback: return the 0th order term if available
+        return cache_dic['cache']['hidden'].get(0, None)
+
+
+def fallback_step_derivative_approximation(cache_dic: Dict, current: Dict, feature: paddle.Tensor):
+    """
+    Fallback implementation of step_derivative_approximation
+    """
+    try:
+        # Always store the current feature as 0th order
+        cache_dic['cache']['hidden'][0] = feature
+        
+        # Compute first derivative if we have enough history
+        if 'previous_feature' in cache_dic:
+            cache_dic['cache']['hidden'][1] = feature - cache_dic['previous_feature']
+        
+        # Store current feature for next iteration
+        cache_dic['previous_feature'] = feature.clone()
+        
+        # Limit cache size for stability using configured max_order
+        max_order = cache_dic.get('max_order', 3)
+        keys_to_remove = [k for k in cache_dic['cache']['hidden'].keys() if k >= max_order]
+        for k in keys_to_remove:
+            del cache_dic['cache']['hidden'][k]
+            
+    except Exception as e:
+        print(f"Error in fallback_step_derivative_approximation: {e}")
+        # Emergency fallback: just store the current feature
+        cache_dic['cache']['hidden'][0] = feature
 
 
 def compute_taylor_coefficients(residual_history: list, max_order: int = 3) -> dict:
     """
-    基于残差历史计算Taylor展开系数
+    Compute Taylor expansion coefficients based on residual history
     
     Args:
-        residual_history: 残差历史列表 [r_t-2, r_t-1, r_t]
-        max_order: 最大Taylor展开阶数
+        residual_history: List of residual history [r_t-2, r_t-1, r_t]
+        max_order: Maximum Taylor expansion order
     
     Returns:
-        dict: Taylor系数 {0: f(t), 1: f'(t), 2: f''(t)/2!, ...}
+        dict: Taylor coefficients {0: f(t), 1: f'(t), 2: f''(t)/2!, ...}
     """
     if len(residual_history) < 2:
         return {}
     
     coefficients = {}
     
-    # 0阶: 当前值
+    # 0-order: current value
     if len(residual_history) >= 1:
         coefficients[0] = residual_history[-1]
     
-    # 1阶: 一阶导数 (差分近似)
+    # 1st-order: first derivative (finite difference approximation)
     if len(residual_history) >= 2:
         coefficients[1] = residual_history[-1] - residual_history[-2]
     
-    # 2阶: 二阶导数 (二阶差分近似)
+    # 2nd-order: second derivative (second-order finite difference)
     if len(residual_history) >= 3 and max_order >= 2:
         second_diff = (residual_history[-1] - residual_history[-2]) - (residual_history[-2] - residual_history[-3])
-        coefficients[2] = second_diff / 2.0  # 除以2!
+        coefficients[2] = second_diff / 2.0  # divide by 2!
     
-    # 3阶及以上可以类似扩展，但实际中2阶已经足够
+    # Higher orders can be extended similarly, but 2nd-order is sufficient in practice
     
     return coefficients
 
 
 def taylor_predict_residual(coefficients: dict, steps_ahead: int = 1) -> paddle.Tensor:
     """
-    使用Taylor展开预测未来的残差
+    Predict future residuals using Taylor expansion
     
     Args:
-        coefficients: Taylor系数字典
-        steps_ahead: 预测步数
+        coefficients: Taylor coefficients dictionary
+        steps_ahead: Number of steps to predict ahead
     
     Returns:
-        预测的残差
+        Predicted residual
     """
     if not coefficients or 0 not in coefficients:
         return None
     
     predicted = coefficients[0].clone()  # f(t)
     
-    # 添加各阶项
+    # Add higher order terms
     for order in range(1, len(coefficients)):
         if order in coefficients:
             term = coefficients[order] * (steps_ahead ** order)
             predicted = predicted + term
     
-    # 数值稳定性检查
+    # Numerical stability check
     if not paddle.isfinite(predicted).all():
-        return coefficients[0]  # 回退到当前值
+        return coefficients[0]  # fallback to current value
     
-    # 限制预测变化的幅度，避免发散
-    max_change_ratio = 0.2  # 最大变化比例
+    # Limit the magnitude of prediction change to avoid divergence
+    max_change_ratio = 0.2  # maximum change ratio
     if 1 in coefficients:
         change_magnitude = paddle.linalg.norm(coefficients[1] * steps_ahead)
         current_magnitude = paddle.linalg.norm(coefficients[0])
@@ -86,7 +175,7 @@ def taylor_predict_residual(coefficients: dict, steps_ahead: int = 1) -> paddle.
 
 def apply_polynomial_rescale(rel_change: float) -> float:
     """
-    应用多项式rescale函数 (来自TeaCache)
+    Apply polynomial rescale function (from TeaCache)
     """
     coefficients = [4.98651651e02, -2.83781631e02, 5.58554382e01, -3.82021401e00, 2.64230861e-01]
     rescale_func = np.poly1d(coefficients)
@@ -127,10 +216,7 @@ def TeaBlockCacheTaylorForward(
                 max_order = self.taylor_cache_system.get('max_order', 3)
                 first_enhance = self.taylor_cache_system.get('first_enhance', 2)
             
-            joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = cache_init_step(self)
-            # Override parameters in case external function doesn't use them
-            joint_attention_kwargs['cache_dic']['max_order'] = max_order
-            joint_attention_kwargs['cache_dic']['first_enhance'] = first_enhance
+            joint_attention_kwargs['cache_dic'], joint_attention_kwargs['current'] = fallback_cache_init_step(self, max_order, first_enhance)
 
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -261,7 +347,7 @@ def TeaBlockCacheTaylorForward(
         )
         
         if can_use_taylor:
-            predicted_hidden = step_taylor_formula(cache_dic=cache_dic, current=current)
+            predicted_hidden = fallback_step_taylor_formula(cache_dic=cache_dic, current=current)
             
             if predicted_hidden is not None and paddle.isfinite(predicted_hidden).all():
                 # Use Taylor prediction, skip all computation
@@ -510,7 +596,7 @@ def TeaBlockCacheTaylorForward(
             # Update global Taylor cache (like TeaCache)
             # Only update Taylor cache if we have enough activated steps
             if len(current['activated_steps']) >= 1:
-                step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
+                fallback_step_derivative_approximation(cache_dic=cache_dic, current=current, feature=hidden_states)
 
         # Reset counter if we've reached the end
         if self.cnt == self.num_steps:
