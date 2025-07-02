@@ -1,3 +1,2 @@
-from .flux_forward import taylorseer_flux_forward
-from .xfuser_flux_forward import taylorseer_xfuser_flux_forward
-from .sort_taylor_forward import SortTaylor_forward
+from .teablockcache_flux_forward import TeaBlockCacheForward
+from .teablockcache_taylor_flux_forward import TeaBlockCacheTaylorForward
