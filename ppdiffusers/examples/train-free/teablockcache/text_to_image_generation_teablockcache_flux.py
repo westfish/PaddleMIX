@@ -33,11 +33,11 @@ FluxTransformer2DModel.forward = TeaBlockCacheForward
 pipeline.transformer.cnt = 0
 pipeline.transformer.num_steps = num_inference_steps
 pipeline.transformer.step_start = 100
-pipeline.transformer.step_end = 800
-pipeline.transformer.block_cache_start = 5
-pipeline.transformer.single_block_cache_start = 10
-pipeline.transformer.block_rel_l1_thresh = 0.3
-pipeline.transformer.single_block_rel_l1_thresh = 0.4
+pipeline.transformer.step_end = 900
+pipeline.transformer.block_cache_start = 3
+pipeline.transformer.single_block_cache_start = 3
+pipeline.transformer.block_rel_l1_thresh = 0.9
+pipeline.transformer.single_block_rel_l1_thresh = 0.9
 
 # Initialize state dictionaries
 pipeline.transformer.block_heuristic_states = {}

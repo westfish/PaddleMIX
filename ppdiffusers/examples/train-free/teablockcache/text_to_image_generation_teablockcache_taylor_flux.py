@@ -32,12 +32,12 @@ FluxTransformer2DModel.forward = TeaBlockCacheTaylorForward
 # Configure TeaBlockCache parameters
 pipeline.transformer.cnt = 0
 pipeline.transformer.num_steps = num_inference_steps
-pipeline.transformer.step_start = 100
-pipeline.transformer.step_end = 800
-pipeline.transformer.block_cache_start = 5
-pipeline.transformer.single_block_cache_start = 10
-pipeline.transformer.block_rel_l1_thresh = 0.3
-pipeline.transformer.single_block_rel_l1_thresh = 0.4
+pipeline.transformer.step_start = 50
+pipeline.transformer.step_end = 950
+pipeline.transformer.block_cache_start = 1
+pipeline.transformer.single_block_cache_start = 1
+pipeline.transformer.block_rel_l1_thresh = 2
+pipeline.transformer.single_block_rel_l1_thresh = 2
 
 # Initialize state dictionaries
 pipeline.transformer.block_heuristic_states = {}
@@ -45,10 +45,10 @@ pipeline.transformer.single_block_heuristic_states = {}
 
 # Initialize Taylor cache system
 pipeline.transformer.enable_teacache = True
-pipeline.transformer.rel_l1_thresh = 0.4
+pipeline.transformer.rel_l1_thresh = 2
 pipeline.transformer.taylor_cache_system = {
-    'max_order': 3,
-    'first_enhance': 2,
+    'max_order': 1,
+    'first_enhance': 1,
     'cache': {'hidden': {}},
     'activated_steps': [],
     'step_counter': 0
