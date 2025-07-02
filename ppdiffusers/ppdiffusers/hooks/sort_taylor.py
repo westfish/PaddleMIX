@@ -27,13 +27,12 @@ logger = logging.get_logger(__name__)
 
 @dataclass
 class SortTaylorConfig:
-    """
-    Configuration for SortTaylor optimization.
+    """Configuration for SortTaylor optimization.
 
     Args:
         num_inference_steps (`int`, defaults to `50`):
-            The number of denoising steps. More denoising steps usually lead to a higher quality image at the
-            expense of slower inference.
+            The number of denoising steps. More denoising steps usually lead to a 
+            higher quality image at the expense of slower inference.
         timestep_start (`int`, defaults to `900`):
             The timestep to start applying SortTaylor optimization.
         timestep_end (`int`, defaults to `100`):
@@ -47,8 +46,8 @@ class SortTaylorConfig:
         beta (`float`, defaults to `0.3`):
             The beta parameter for rescaling.
         current_timestep_callback (`Callable[[], int]`, *optional*):
-            A callback function that returns the current inference timestep. This is required for timestep-based
-            optimization.
+            A callback function that returns the current inference timestep. This 
+            is required for timestep-based optimization.
     """
     
     num_inference_steps: int = 50
@@ -62,7 +61,7 @@ class SortTaylorConfig:
 
     def __repr__(self) -> str:
         return (
-            f"SortTaylorConfig("
+            "SortTaylorConfig(\n"
             f"  num_inference_steps={self.num_inference_steps},\n"
             f"  timestep_start={self.timestep_start},\n"
             f"  timestep_end={self.timestep_end},\n"
@@ -76,8 +75,7 @@ class SortTaylorConfig:
 
 
 class SortTaylorState:
-    """
-    State for SortTaylor optimization.
+    """State for SortTaylor optimization.
 
     Attributes:
         count (`int`):
@@ -132,6 +130,7 @@ class SortTaylorState:
 
 class SortTaylorHook(ModelHook):
     """A hook that applies SortTaylor optimization to FluxTransformer2DModel."""
+    
     _is_stateful = True
 
     def __init__(self, config: SortTaylorConfig):
@@ -140,7 +139,9 @@ class SortTaylorHook(ModelHook):
 
     def initialize_hook(self, module):
         if not isinstance(module, FluxTransformer2DModel):
-            raise ValueError("SortTaylor optimization can only be applied to FluxTransformer2DModel")
+            raise ValueError(
+                "SortTaylor optimization can only be applied to FluxTransformer2DModel"
+            )
         
         transformer_blocks_len = len(module.transformer_blocks)
         single_transformer_blocks_len = len(module.single_transformer_blocks)
@@ -456,12 +457,12 @@ def apply_sort_taylor(module: paddle.nn.Layer, config: SortTaylorConfig):
     """
     if not isinstance(module, FluxTransformer2DModel):
         raise ValueError("SortTaylor optimization can only be applied to FluxTransformer2DModel")
-    
-    if config.current_timestep_callback is None:
-        logger.warning(
-            "The `current_timestep_callback` function is not provided. SortTaylor may not work optimally "
-            "without access to the current timestep information."
-        )
+        if config.current_timestep_callback is None:
+            logger.warning(
+                "The `current_timestep_callback` function is not provided. "
+                "SortTaylor may not work optimally without access to the current "
+                "timestep information."
+            )
 
     registry = HookRegistry.check_if_exists_or_initialize(module)
     hook = SortTaylorHook(config)
