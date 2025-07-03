@@ -112,8 +112,8 @@ else:
             "HookRegistry",
             "PyramidAttentionBroadcastConfig",
             "apply_pyramid_attention_broadcast",
-            "SortTaylorConfig",
-            "apply_sort_taylor",
+            "SortBlockConfig",
+            "apply_sort_block",
             "TeaBlockCacheTaylorConfig",
             "apply_teablockcache_taylor",
         ]
@@ -584,8 +584,8 @@ if TYPE_CHECKING or PPDIFFUSERS_SLOW_IMPORT:
             HookRegistry,
             PyramidAttentionBroadcastConfig,
             apply_pyramid_attention_broadcast,
-            SortTaylorConfig,
-            apply_sort_taylor,
+            SortBlockConfig,
+            apply_sort_block,
             TeaBlockCacheTaylorConfig,
             apply_teablockcache_taylor,
         )

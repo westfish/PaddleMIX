@@ -22,10 +22,10 @@ class CacheMixin:
         Enable caching techniques on the model.
 
         Args:
-            config (`Union[PyramidAttentionBroadcastConfig, SortTaylorConfig, TeaBlockCacheTaylorConfig]`):
+            config (`Union[PyramidAttentionBroadcastConfig, SortBlockConfig, TeaBlockCacheTaylorConfig]`):
                 The configuration for applying the caching technique. Currently supported caching techniques are:
                     - [`~hooks.PyramidAttentionBroadcastConfig`]
-                    - [`~hooks.SortTaylorConfig`]
+                    - [`~hooks.SortBlockConfig`]
                     - [`~hooks.TeaBlockCacheTaylorConfig`]
 
         Example:
@@ -43,10 +43,10 @@ class CacheMixin:
         ... )
         >>> pipe.transformer.enable_cache(config)
         
-        >>> # Or for SortTaylor optimization:
-        >>> from ppdiffusers import FluxPipeline, SortTaylorConfig
+        >>> # Or for SortBlock optimization:
+        >>> from ppdiffusers import FluxPipeline, SortBlockConfig
         >>> pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
-        >>> config = SortTaylorConfig(
+        >>> config = SortBlockConfig(
         ...     timestep_start=900,
         ...     timestep_end=100,
         ...     beta=0.3,
@@ -69,11 +69,11 @@ class CacheMixin:
         >>> pipe.transformer.enable_cache(config)
         ```
         """
-        from ..hooks import PyramidAttentionBroadcastConfig, apply_pyramid_attention_broadcast, SortTaylorConfig, apply_sort_taylor, TeaBlockCacheTaylorConfig, apply_teablockcache_taylor
+        from ..hooks import PyramidAttentionBroadcastConfig, apply_pyramid_attention_broadcast, SortBlockConfig, apply_sort_block, TeaBlockCacheTaylorConfig, apply_teablockcache_taylor
         if isinstance(config, PyramidAttentionBroadcastConfig):
             apply_pyramid_attention_broadcast(self, config)
-        elif isinstance(config, SortTaylorConfig):
-            apply_sort_taylor(self, config)
+        elif isinstance(config, SortBlockConfig):
+            apply_sort_block(self, config)
         elif isinstance(config, TeaBlockCacheTaylorConfig):
             apply_teablockcache_taylor(self, config)
         else:
@@ -81,7 +81,7 @@ class CacheMixin:
         self._cache_config = config
 
     def disable_cache(self) ->None:
-        from ..hooks import HookRegistry, PyramidAttentionBroadcastConfig, SortTaylorConfig, TeaBlockCacheTaylorConfig
+        from ..hooks import HookRegistry, PyramidAttentionBroadcastConfig, SortBlockConfig, TeaBlockCacheTaylorConfig
         if self._cache_config is None:
             logger.warning(
                 "Caching techniques have not been enabled, so there's nothing to disable."
@@ -90,9 +90,9 @@ class CacheMixin:
         if isinstance(self._cache_config, PyramidAttentionBroadcastConfig):
             registry = HookRegistry.check_if_exists_or_initialize(self)
             registry.remove_hook('pyramid_attention_broadcast', recurse=True)
-        elif isinstance(self._cache_config, SortTaylorConfig):
+        elif isinstance(self._cache_config, SortBlockConfig):
             registry = HookRegistry.check_if_exists_or_initialize(self)
-            registry.remove_hook('sort_taylor', recurse=True)
+            registry.remove_hook('sort_block', recurse=True)
         elif isinstance(self._cache_config, TeaBlockCacheTaylorConfig):
             registry = HookRegistry.check_if_exists_or_initialize(self)
             registry.remove_hook('teablockcache_taylor', recurse=True)

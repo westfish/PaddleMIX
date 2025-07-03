@@ -26,17 +26,17 @@ logger = logging.get_logger(__name__)
 
 
 @dataclass
-class SortTaylorConfig:
-    """Configuration for SortTaylor optimization.
+class SortBlockConfig:
+    """Configuration for SortBlock optimization.
 
     Args:
         num_inference_steps (`int`, defaults to `50`):
             The number of denoising steps. More denoising steps usually lead to a 
             higher quality image at the expense of slower inference.
         timestep_start (`int`, defaults to `900`):
-            The timestep to start applying SortTaylor optimization.
+            The timestep to start applying SortBlock optimization.
         timestep_end (`int`, defaults to `100`):
-            The timestep to end applying SortTaylor optimization.
+            The timestep to end applying SortBlock optimization.
         percentage (`float`, defaults to `1.0`):
             The percentage of blocks to compute in each layer.
         step_num (`int`, defaults to `1`):
@@ -61,7 +61,7 @@ class SortTaylorConfig:
 
     def __repr__(self) -> str:
         return (
-            "SortTaylorConfig(\n"
+            "SortBlockConfig(\n"
             f"  num_inference_steps={self.num_inference_steps},\n"
             f"  timestep_start={self.timestep_start},\n"
             f"  timestep_end={self.timestep_end},\n"
@@ -74,8 +74,8 @@ class SortTaylorConfig:
         )
 
 
-class SortTaylorState:
-    """State for SortTaylor optimization.
+class SortBlockState:
+    """State for SortBlock optimization.
 
     Attributes:
         count (`int`):
@@ -125,27 +125,27 @@ class SortTaylorState:
         self.percentage = 1.0
 
     def __repr__(self):
-        return f"SortTaylorState(count={self.count}, percentage={self.percentage})"
+        return f"SortBlockState(count={self.count}, percentage={self.percentage})"
 
 
-class SortTaylorHook(ModelHook):
-    """A hook that applies SortTaylor optimization to FluxTransformer2DModel."""
+class SortBlockHook(ModelHook):
+    """A hook that applies SortBlock optimization to FluxTransformer2DModel."""
     
     _is_stateful = True
 
-    def __init__(self, config: SortTaylorConfig):
+    def __init__(self, config: SortBlockConfig):
         super().__init__()
         self.config = config
 
     def initialize_hook(self, module):
         if not isinstance(module, FluxTransformer2DModel):
             raise ValueError(
-                "SortTaylor optimization can only be applied to FluxTransformer2DModel"
+                "SortBlock optimization can only be applied to FluxTransformer2DModel"
             )
         
         transformer_blocks_len = len(module.transformer_blocks)
         single_transformer_blocks_len = len(module.single_transformer_blocks)
-        self.state = SortTaylorState(transformer_blocks_len, single_transformer_blocks_len)
+        self.state = SortBlockState(transformer_blocks_len, single_transformer_blocks_len)
         
         # Store original forward method
         self.original_forward = module.forward
@@ -172,10 +172,10 @@ class SortTaylorHook(ModelHook):
         module.result_single_list = self.state.result_single_list
         
         # Store reference to hook for state management
-        module._sort_taylor_hook = self
+        module._sort_block_hook = self
         
-        # Replace forward method with SortTaylor implementation
-        def sort_taylor_forward_wrapper(
+        # Replace forward method with SortBlock implementation
+        def sort_block_forward_wrapper(
             hidden_states: paddle.Tensor,
             encoder_hidden_states: paddle.Tensor = None,
             pooled_projections: paddle.Tensor = None,
@@ -189,7 +189,7 @@ class SortTaylorHook(ModelHook):
             return_dict: bool = True,
             controlnet_blocks_repeat: bool = False,
         ):
-            return self._sort_taylor_forward(
+            return self._sort_block_forward(
                 module,
                 hidden_states,
                 encoder_hidden_states,
@@ -205,7 +205,7 @@ class SortTaylorHook(ModelHook):
                 controlnet_blocks_repeat,
             )
         
-        module.forward = sort_taylor_forward_wrapper
+        module.forward = sort_block_forward_wrapper
         
         return module
 
@@ -238,7 +238,7 @@ class SortTaylorHook(ModelHook):
         """Simple Taylor expansion for demonstration."""
         return derivative * step_diff
 
-    def _sort_taylor_forward(
+    def _sort_block_forward(
         self,
         module,
         hidden_states: paddle.Tensor,
@@ -255,7 +255,7 @@ class SortTaylorHook(ModelHook):
         controlnet_blocks_repeat: bool = False,
     ) -> Union[paddle.Tensor, Transformer2DModelOutput]:
         """
-        SortTaylor optimized forward method for FluxTransformer2DModel.
+        SortBlock optimized forward method for FluxTransformer2DModel.
         """
         if joint_attention_kwargs is None:
             joint_attention_kwargs = {}
@@ -459,48 +459,48 @@ class SortTaylorHook(ModelHook):
         return Transformer2DModelOutput(sample=output)
 
 
-def apply_sort_taylor(module: paddle.nn.Layer, config: SortTaylorConfig):
+def apply_sort_block(module: paddle.nn.Layer, config: SortBlockConfig):
     """
-    Apply SortTaylor optimization to a given FluxTransformer2DModel.
+    Apply SortBlock optimization to a given FluxTransformer2DModel.
 
-    SortTaylor is an optimization method that uses Taylor series approximation to skip certain transformer
+    SortBlock is an optimization method that uses Taylor series approximation to skip certain transformer
     block computations during inference, reducing computational cost while maintaining output quality.
 
     Args:
         module (`paddle.nn.Layer`):
-            The FluxTransformer2DModel module to apply SortTaylor optimization to.
-        config (`SortTaylorConfig`):
-            The configuration to use for SortTaylor optimization.
+            The FluxTransformer2DModel module to apply SortBlock optimization to.
+        config (`SortBlockConfig`):
+            The configuration to use for SortBlock optimization.
 
     Example:
 
     ```python
     >>> import paddle
-    >>> from ppdiffusers import FluxPipeline, SortTaylorConfig, apply_sort_taylor
+    >>> from ppdiffusers import FluxPipeline, SortBlockConfig, apply_sort_block
 
     >>> pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
 
-    >>> config = SortTaylorConfig(
+    >>> config = SortBlockConfig(
     ...     num_inference_steps=50,
     ...     timestep_start=900,
     ...     timestep_end=100,
     ...     beta=0.3,
     ...     current_timestep_callback=lambda: pipe._current_timestep,
     ... )
-    >>> apply_sort_taylor(pipe.transformer, config)
+    >>> apply_sort_block(pipe.transformer, config)
     ```
     """
     if not isinstance(module, FluxTransformer2DModel):
-        raise ValueError("SortTaylor optimization can only be applied to FluxTransformer2DModel")
+        raise ValueError("SortBlock optimization can only be applied to FluxTransformer2DModel")
         if config.current_timestep_callback is None:
             logger.warning(
                 "The `current_timestep_callback` function is not provided. "
-                "SortTaylor may not work optimally without access to the current "
+                "SortBlock may not work optimally without access to the current "
                 "timestep information."
             )
 
     registry = HookRegistry.check_if_exists_or_initialize(module)
-    hook = SortTaylorHook(config)
-    registry.register_hook(hook, 'sort_taylor')
+    hook = SortBlockHook(config)
+    registry.register_hook(hook, 'sort_block')
     
-    logger.info("SortTaylor optimization has been applied to the FluxTransformer2DModel") 
+    logger.info("SortBlock optimization has been applied to the FluxTransformer2DModel") 

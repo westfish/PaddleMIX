@@ -15,13 +15,13 @@
 import paddle
 import time
 
-from ppdiffusers import FluxPipeline, SortTaylorConfig, apply_sort_taylor
+from ppdiffusers import FluxPipeline, SortBlockConfig, apply_sort_block
 
 # Load the pipeline
 pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", paddle_dtype=paddle.float16)
 
-# Configure SortTaylor optimization
-config = SortTaylorConfig(
+# Configure SortBlock optimization
+config = SortBlockConfig(
     num_inference_steps=50,
     timestep_start=900,
     timestep_end=100,
@@ -32,8 +32,8 @@ config = SortTaylorConfig(
     current_timestep_callback=lambda: getattr(pipe, '_current_timestep', None),
 )
 
-# Apply SortTaylor optimization using the integrated framework
-apply_sort_taylor(pipe.transformer, config)
+# Apply SortBlock optimization using the integrated framework
+apply_sort_block(pipe.transformer, config)
 
 # Alternative method using enable_cache
 # pipe.transformer.enable_cache(config)
@@ -56,7 +56,9 @@ end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Elapsed time: {elapsed_time:.2f} seconds")
 
-# Generate another image
+image.save("text_to_image_generation-sortblock-flux-hook-result-0.png")
+
+# Generate second image
 start_time = time.time()
 prompt = "An image of a squirrel in Picasso style"
 
@@ -74,7 +76,7 @@ end_time = time.time()
 elapsed_time = end_time - start_time
 print(f"Elapsed time: {elapsed_time:.2f} seconds")
 
-image.save("text_to_image_generation-flux-sort_taylor-result.png")
+image.save("text_to_image_generation-sortblock-flux-hook-result-1.png")
 
 # Disable optimization if needed
 # pipe.transformer.disable_cache() 
