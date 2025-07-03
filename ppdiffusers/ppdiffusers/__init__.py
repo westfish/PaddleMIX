@@ -114,6 +114,8 @@ else:
             "apply_pyramid_attention_broadcast",
             "SortTaylorConfig",
             "apply_sort_taylor",
+            "TeaBlockCacheTaylorConfig",
+            "apply_teablockcache_taylor",
         ]
     )
     _import_structure["models"].extend(
@@ -584,6 +586,8 @@ if TYPE_CHECKING or PPDIFFUSERS_SLOW_IMPORT:
             apply_pyramid_attention_broadcast,
             SortTaylorConfig,
             apply_sort_taylor,
+            TeaBlockCacheTaylorConfig,
+            apply_teablockcache_taylor,
         )
         from .optimization import (
             get_constant_schedule,
